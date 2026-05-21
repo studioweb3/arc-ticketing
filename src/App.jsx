@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 
 // --- CONFIGURATION ARC TICKETING ---
-const FACTORY_ADDRESS = "0x4530a37FCd13201F5cdC7018136Be3714cA9045E"; 
+const FACTORY_ADDRESS = "0x197E11Bf5EddF28cA56f9A2BF40eb21eCa1C1a46"; 
 const USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
 
 const factoryABI = [
@@ -54,14 +54,19 @@ export default function App() {
     const [signer, setSigner] = useState(null);
     const [userAddress, setUserAddress] = useState("");
     
+    // États globaux
     const [activeTab, setActiveTab] = useState("spectator"); 
     const [status, setStatus] = useState({ text: "", isError: false });
+    const [seatActionStatus, setSeatActionStatus] = useState({ text: "", isError: false }); // NOUVEAU : Message dédié au siège
+    
     const [myEvents, setMyEvents] = useState([]);
     const [allAvailableEvents, setAllAvailableEvents] = useState([]);
 
+    // États du panneau Organisateur
     const [selectedEvent, setSelectedEvent] = useState(null);
     const [eventDetails, setEventDetails] = useState({ name: "", flyer: "", start: "", price: "0", markup: "0", royalty: "0", deadline: "", maxSeats: "0", deadlineUnix: 0 });
     
+    // Formulaire
     const [eventName, setEventName] = useState("");
     const [flyerUrl, setFlyerUrl] = useState("https://images.unsplash.com/photo-1540039155732-68473638e4ce?w=800&q=80"); 
     const [startDate, setStartDate] = useState(getTomorrowLocalISO());
@@ -75,15 +80,18 @@ export default function App() {
     const [modifRoyalty, setModifRoyalty] = useState("");
     const [modifDeadlineDate, setModifDeadlineDate] = useState(getTomorrowLocalISO());
 
+    // États du panneau Spectateur
     const [targetEvent, setTargetEvent] = useState(null); 
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [selectedSeat, setSelectedSeat] = useState(null);
     
+    // Suivi détaillé des sièges
     const [takenSeats, setTakenSeats] = useState([]);
     const [myOwnedSeats, setMyOwnedSeats] = useState([]);
     const [resaleListings, setResaleListings] = useState({}); 
     const [activeOffers, setActiveOffers] = useState({});     
     
+    // Inputs pour revente et offres
     const [resalePriceInput, setResalePriceInput] = useState(""); 
     const [offerSeatInput, setOfferSeatInput] = useState("0"); 
     const [offerUsdcInput, setOfferUsdcInput] = useState("");
@@ -94,9 +102,15 @@ export default function App() {
 
     const seatsPerRow = 10; 
 
+    // --- OUTILS UI ---
     const showStatus = (text, isError) => {
         setStatus({ text, isError });
         setTimeout(() => setStatus({ text: "", isError: false }), 5000);
+    };
+
+    const showSeatStatus = (text, isError) => {
+        setSeatActionStatus({ text, isError });
+        setTimeout(() => setSeatActionStatus({ text: "", isError: false }), 6000);
     };
 
     const formatAddress = (addr) => {
@@ -110,6 +124,7 @@ export default function App() {
         setTimeout(() => setTargetEvent(currentTarget), 100);
     };
 
+    // --- INITIALISATION ---
     const connectWallet = async () => {
         if (window.ethereum) {
             try {
@@ -332,10 +347,11 @@ export default function App() {
         fetchSeatsAndData();
     }, [targetEvent, provider, userAddress]);
 
+    // --- ACTIONS SPECTATEUR (Avec affichage des erreurs en bas) ---
     const handleBuyTicket = async () => {
         if (!targetEvent) return;
         try {
-            showStatus("Approbation du paiement USDC...", false);
+            showSeatStatus("Approbation du paiement USDC...", false);
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             const usdcContract = new ethers.Contract(USDC_ADDRESS, usdcABI, signer);
             
@@ -343,36 +359,36 @@ export default function App() {
             const approveTx = await usdcContract.approve(targetEvent.eventAddress, rawPrice);
             await approveTx.wait();
 
-            showStatus("Achat de la place en cours...", false);
+            showSeatStatus("Achat de la place en cours...", false);
             const numericalSeatId = getSeatIdNumber(selectedSeat);
             const buyTx = await eventContract.buyTicket(numericalSeatId);
             await buyTx.wait();
 
-            showStatus(`✅ Place ${selectedSeat} achetée avec succès !`, false);
+            showSeatStatus("Acheté avec succès !", false);
             setSelectedSeat(null);
             refreshSpectatorGrid();
-        } catch (err) { showStatus("❌ Échec de la transaction", true); }
+        } catch (err) { showSeatStatus("Échec de la transaction", true); }
     };
 
     const handleRefundTicket = async () => {
         try {
-            showStatus("Demande de remboursement en cours...", false);
+            showSeatStatus("Demande de remboursement en cours...", false);
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             const numericalSeatId = getSeatIdNumber(selectedSeat);
             
             const tx = await eventContract.refundTicket(numericalSeatId);
             await tx.wait();
             
-            showStatus(`✅ Billet remboursé ! L'argent est de retour.`, false);
+            showSeatStatus("Billet remboursé !", false);
             setSelectedSeat(null);
             refreshSpectatorGrid();
-        } catch (err) { showStatus("❌ Échec (Délai dépassé ou erreur)", true); }
+        } catch (err) { showSeatStatus("Échec du remboursement (Délai dépassé ?)", true); }
     };
 
     const handleListForResale = async () => {
         try {
-            if (!resalePriceInput || Number(resalePriceInput) <= 0) return showStatus("❌ Entrez un prix valide", true);
-            showStatus("Mise en vente sur le marché secondaire...", false);
+            if (!resalePriceInput || Number(resalePriceInput) <= 0) return showSeatStatus("Entrez un prix valide", true);
+            showSeatStatus("Mise en vente sur le marché secondaire...", false);
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             const numericalSeatId = getSeatIdNumber(selectedSeat);
             const priceInUnits = ethers.parseUnits(resalePriceInput, 6);
@@ -380,31 +396,31 @@ export default function App() {
             const tx = await eventContract.listForResale(numericalSeatId, priceInUnits);
             await tx.wait();
             
-            showStatus(`✅ Place mise en revente !`, false);
+            showSeatStatus("Place mise en revente !", false);
             setResalePriceInput("");
             setSelectedSeat(null);
             refreshSpectatorGrid();
-        } catch (err) { showStatus("❌ Échec (Vérifiez le plafond max)", true); }
+        } catch (err) { showSeatStatus("Échec : Le prix dépasse le plafond autorisé", true); }
     };
 
     const handleCancelResale = async () => {
         try {
-            showStatus("Annulation de la vente...", false);
+            showSeatStatus("Annulation de la vente...", false);
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             const numericalSeatId = getSeatIdNumber(selectedSeat);
             
             const tx = await eventContract.cancelResale(numericalSeatId);
             await tx.wait();
             
-            showStatus(`✅ Vente annulée !`, false);
+            showSeatStatus("Vente annulée !", false);
             setSelectedSeat(null);
             refreshSpectatorGrid();
-        } catch (err) { showStatus("❌ Échec de l'annulation", true); }
+        } catch (err) { showSeatStatus("Échec de l'annulation", true); }
     };
 
     const handleBuyResaleTicket = async () => {
         try {
-            showStatus("Approbation du paiement USDC...", false);
+            showSeatStatus("Approbation du paiement USDC...", false);
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             const usdcContract = new ethers.Contract(USDC_ADDRESS, usdcABI, signer);
             
@@ -413,24 +429,24 @@ export default function App() {
             const approveTx = await usdcContract.approve(targetEvent.eventAddress, rawPrice);
             await approveTx.wait();
 
-            showStatus("Achat sur le marché secondaire...", false);
+            showSeatStatus("Achat sur le marché secondaire...", false);
             const numericalSeatId = getSeatIdNumber(selectedSeat);
             const buyTx = await eventContract.buyResaleTicket(numericalSeatId);
             await buyTx.wait();
 
-            showStatus(`✅ Billet de revente acheté !`, false);
+            showSeatStatus("Billet de revente acheté !", false);
             setSelectedSeat(null);
             refreshSpectatorGrid();
-        } catch (err) { showStatus("❌ Échec de l'achat", true); }
+        } catch (err) { showSeatStatus("Échec de l'achat", true); }
     };
 
     const handleMakeOffer = async () => {
         try {
             if (offerSeatInput === "0" && (!offerUsdcInput || Number(offerUsdcInput) === 0)) {
-                return showStatus("❌ Votre offre ne peut pas être vide", true);
+                return showSeatStatus("Votre offre ne peut pas être vide", true);
             }
 
-            showStatus("Envoi de l'offre (Approbation USDC si besoin)...", false);
+            showSeatStatus("Envoi de l'offre (Approbation USDC si besoin)...", false);
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             
             const extraUsdcRaw = ethers.parseUnits(offerUsdcInput || "0", 6);
@@ -440,33 +456,33 @@ export default function App() {
                 await approveTx.wait();
             }
 
-            showStatus("Mise sous séquestre des éléments de l'offre...", false);
+            showSeatStatus("Mise sous séquestre des éléments de l'offre...", false);
             const targetIdNum = getSeatIdNumber(selectedSeat);
             const mySeatIdNum = getSeatIdNumber(offerSeatInput);
             
             const tx = await eventContract.makeOffer(targetIdNum, mySeatIdNum, extraUsdcRaw);
             await tx.wait();
 
-            showStatus(`✅ Offre envoyée avec succès !`, false);
+            showSeatStatus("Offre envoyée avec succès !", false);
             setSelectedSeat(null);
             setOfferUsdcInput("");
             refreshSpectatorGrid();
-        } catch (err) { showStatus("❌ Échec de l'offre (Plafond ou existante)", true); console.error(err); }
+        } catch (err) { showSeatStatus("Échec : Plafond dépassé ou offre déjà existante", true); }
     };
 
     const handleAcceptOffer = async () => {
         try {
-            showStatus("Acceptation de l'offre...", false);
+            showSeatStatus("Acceptation de l'offre...", false);
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             const numericalSeatId = getSeatIdNumber(selectedSeat);
             
             const tx = await eventContract.acceptOffer(numericalSeatId);
             await tx.wait();
 
-            showStatus(`✅ Échange/Vente validé !`, false);
+            showSeatStatus("Échange/Vente validé !", false);
             setSelectedSeat(null);
             refreshSpectatorGrid();
-        } catch (err) { showStatus("❌ Échec de l'échange", true); }
+        } catch (err) { showSeatStatus("Échec de l'échange", true); }
     };
 
     const totalRowsNeeded = Math.ceil(currentEventTotalSeats / seatsPerRow);
@@ -513,6 +529,7 @@ export default function App() {
                     </div>
                 </header>
 
+                {/* Statut Global */}
                 {status.text && (
                     <div className="text-center text-sm font-mono p-3 bg-slate-900 border border-slate-800 rounded-xl">
                         <span className={status.isError ? 'text-red-400' : 'text-emerald-400'}>{status.text}</span>
@@ -543,7 +560,7 @@ export default function App() {
                                             <input type="datetime-local" value={deadlineDate} onChange={(e) => setDeadlineDate(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-orange-300" required />
                                         </div>
                                     </div>
-                                    <div className="grid grid-cols-3 gap-3">
+                                    <div className="grid grid-cols-2 gap-3">
                                         <div>
                                             <label className="text-[9px] text-slate-500 uppercase font-bold">Places</label>
                                             <input type="number" value={formSeats} onChange={(e) => setFormSeats(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono text-violet-400" required />
@@ -553,8 +570,13 @@ export default function App() {
                                             <input type="number" value={ticketPrice} onChange={(e) => setTicketPrice(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono" required />
                                         </div>
                                         <div>
-                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Plafond (%)</label>
+                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Plafond Anti-Scalping (%)</label>
                                             <input type="number" value={maxMarkup} onChange={(e) => setMaxMarkup(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono" required />
+                                        </div>
+                                        <div>
+                                            {/* NOUVEAU: Le champ Royalties est maintenant bien visible ! */}
+                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Royalties (%)</label>
+                                            <input type="number" value={royalty} onChange={(e) => setRoyalty(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono text-orange-400" required />
                                         </div>
                                     </div>
                                     <button type="submit" className="mt-2 bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold py-2.5 rounded-xl transition">DÉPLOYER SUR LA BLOCKCHAIN</button>
@@ -782,75 +804,84 @@ export default function App() {
                             const isRefundActive = currentEventRefundDeadline > Math.floor(Date.now() / 1000);
 
                             return (
-                                <div className="mt-6 w-full max-w-3xl bg-slate-950 border border-slate-800 p-5 rounded-2xl flex flex-col md:flex-row justify-between items-center animate-fade-in shadow-2xl gap-4">
-                                    <div>
-                                        <p className="text-white font-bold text-sm">Siège sélectionné : <span className="text-emerald-400">{selectedSeat}</span></p>
-                                        <p className="text-slate-500 text-xs mt-1">Numéro Blockchain : #{getSeatIdNumber(selectedSeat)}</p>
+                                <div className="mt-6 w-full max-w-3xl bg-slate-950 border border-slate-800 p-5 rounded-2xl flex flex-col animate-fade-in shadow-2xl gap-4">
+                                    <div className="flex flex-col md:flex-row justify-between items-center w-full gap-4">
+                                        <div>
+                                            <p className="text-white font-bold text-sm">Siège sélectionné : <span className="text-emerald-400">{selectedSeat}</span></p>
+                                            <p className="text-slate-500 text-xs mt-1">Numéro Blockchain : #{getSeatIdNumber(selectedSeat)}</p>
+                                        </div>
+                                        
+                                        <div className="flex items-center gap-4">
+                                            {isOwned ? (
+                                                incomingOffer ? (
+                                                    <div className="bg-sky-900/40 border border-sky-700 p-3 rounded-xl flex items-center gap-3">
+                                                        <div>
+                                                            <p className="text-xs text-sky-300 font-bold">🎉 Offre d'achat/échange reçue !</p>
+                                                            <p className="text-[10px] text-slate-300">
+                                                                {incomingOffer.offeredTicketStr !== "Aucun" 
+                                                                    ? `Contre le siège ${incomingOffer.offeredTicketStr} + ${incomingOffer.usdcAmount} USDC`
+                                                                    : `Contre ${incomingOffer.usdcAmount} USDC`}
+                                                            </p>
+                                                        </div>
+                                                        <button onClick={handleAcceptOffer} className="bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition">
+                                                            ACCEPTER L'OFFRE
+                                                        </button>
+                                                    </div>
+                                                ) : isResale ? (
+                                                    <>
+                                                        <span className="text-orange-400 font-bold text-xs">En vente : {resalePrice} USDC</span>
+                                                        <button onClick={handleCancelResale} className="bg-red-600 hover:bg-red-500 text-white text-xs font-bold px-6 py-3.5 rounded-xl transition">
+                                                            ANNULER LA VENTE
+                                                        </button>
+                                                    </>
+                                                ) : (
+                                                    <div className="flex flex-col gap-2">
+                                                        {isRefundActive ? (
+                                                            <button onClick={handleRefundTicket} className="bg-emerald-600/20 hover:bg-emerald-600/40 border border-emerald-500/50 text-emerald-400 text-xs font-bold px-6 py-2 rounded-xl transition w-full">
+                                                                REMBOURSEMENT INSTANTANÉ
+                                                            </button>
+                                                        ) : (
+                                                            <p className="text-[10px] text-slate-500 text-center font-bold">Remboursements terminés</p>
+                                                        )}
+                                                        
+                                                        <div className="flex gap-2">
+                                                            <input type="number" placeholder="Prix USDC" value={resalePriceInput} onChange={(e) => setResalePriceInput(e.target.value)} className="w-24 bg-slate-900 border border-slate-700 rounded-xl px-3 text-xs outline-none text-white font-mono" />
+                                                            <button onClick={handleListForResale} className="bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold px-6 py-3 rounded-xl transition flex-1">
+                                                                METTRE EN VENTE
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                )
+                                            ) : isResale ? (
+                                                <button onClick={handleBuyResaleTicket} className="bg-orange-500 hover:bg-orange-400 text-white text-xs font-bold px-8 py-3.5 rounded-xl transition shadow-[0_0_15px_rgba(249,115,22,0.3)]">
+                                                    ACHETER REVENTE ({resalePrice} USDC)
+                                                </button>
+                                            ) : isTaken ? (
+                                                <div className="flex flex-col sm:flex-row gap-2 items-center bg-slate-900 p-2 rounded-xl border border-slate-800">
+                                                    <select value={offerSeatInput} onChange={(e) => setOfferSeatInput(e.target.value)} className="bg-slate-950 border border-slate-700 text-white text-xs px-2 py-2 rounded-lg outline-none cursor-pointer">
+                                                        <option value="0">Aucun billet (USDC uniquement)</option>
+                                                        {myOwnedSeats.map(seat => <option key={seat} value={seat}>Mon siège {seat}</option>)}
+                                                    </select>
+                                                    <span className="text-slate-500 font-bold text-xs">+</span>
+                                                    <input type="number" placeholder="Montant USDC" value={offerUsdcInput} onChange={(e) => setOfferUsdcInput(e.target.value)} className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs outline-none text-white font-mono" />
+                                                    <button onClick={handleMakeOffer} className="bg-sky-600 hover:bg-sky-500 text-white text-[10px] font-bold px-4 py-2.5 rounded-lg transition ml-2">
+                                                        FAIRE UNE OFFRE
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <button onClick={handleBuyTicket} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-8 py-3.5 rounded-xl transition shadow-[0_0_15px_rgba(16,185,129,0.3)]">
+                                                    ACHETER ({currentEventPrice} USDC)
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
                                     
-                                    <div className="flex items-center gap-4">
-                                        {isOwned ? (
-                                            incomingOffer ? (
-                                                <div className="bg-sky-900/40 border border-sky-700 p-3 rounded-xl flex items-center gap-3">
-                                                    <div>
-                                                        <p className="text-xs text-sky-300 font-bold">🎉 Offre d'achat/échange reçue !</p>
-                                                        <p className="text-[10px] text-slate-300">
-                                                            {incomingOffer.offeredTicketStr !== "Aucun" 
-                                                                ? `Contre le siège ${incomingOffer.offeredTicketStr} + ${incomingOffer.usdcAmount} USDC`
-                                                                : `Contre ${incomingOffer.usdcAmount} USDC`}
-                                                        </p>
-                                                    </div>
-                                                    <button onClick={handleAcceptOffer} className="bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition">
-                                                        ACCEPTER L'OFFRE
-                                                    </button>
-                                                </div>
-                                            ) : isResale ? (
-                                                <>
-                                                    <span className="text-orange-400 font-bold text-xs">En vente : {resalePrice} USDC</span>
-                                                    <button onClick={handleCancelResale} className="bg-red-600 hover:bg-red-500 text-white text-xs font-bold px-6 py-3.5 rounded-xl transition">
-                                                        ANNULER LA VENTE
-                                                    </button>
-                                                </>
-                                            ) : (
-                                                <div className="flex flex-col gap-2">
-                                                    {isRefundActive ? (
-                                                        <button onClick={handleRefundTicket} className="bg-emerald-600/20 hover:bg-emerald-600/40 border border-emerald-500/50 text-emerald-400 text-xs font-bold px-6 py-2 rounded-xl transition w-full">
-                                                            REMBOURSEMENT INSTANTANÉ
-                                                        </button>
-                                                    ) : (
-                                                        <p className="text-[10px] text-slate-500 text-center font-bold">Remboursements terminés</p>
-                                                    )}
-                                                    
-                                                    <div className="flex gap-2">
-                                                        <input type="number" placeholder="Prix USDC" value={resalePriceInput} onChange={(e) => setResalePriceInput(e.target.value)} className="w-24 bg-slate-900 border border-slate-700 rounded-xl px-3 text-xs outline-none text-white font-mono" />
-                                                        <button onClick={handleListForResale} className="bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold px-6 py-3 rounded-xl transition flex-1">
-                                                            METTRE EN VENTE
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            )
-                                        ) : isResale ? (
-                                            <button onClick={handleBuyResaleTicket} className="bg-orange-500 hover:bg-orange-400 text-white text-xs font-bold px-8 py-3.5 rounded-xl transition shadow-[0_0_15px_rgba(249,115,22,0.3)]">
-                                                ACHETER REVENTE ({resalePrice} USDC)
-                                            </button>
-                                        ) : isTaken ? (
-                                            <div className="flex flex-col sm:flex-row gap-2 items-center bg-slate-900 p-2 rounded-xl border border-slate-800">
-                                                <select value={offerSeatInput} onChange={(e) => setOfferSeatInput(e.target.value)} className="bg-slate-950 border border-slate-700 text-white text-xs px-2 py-2 rounded-lg outline-none cursor-pointer">
-                                                    <option value="0">Aucun billet (USDC uniquement)</option>
-                                                    {myOwnedSeats.map(seat => <option key={seat} value={seat}>Mon siège {seat}</option>)}
-                                                </select>
-                                                <span className="text-slate-500 font-bold text-xs">+</span>
-                                                <input type="number" placeholder="Montant USDC" value={offerUsdcInput} onChange={(e) => setOfferUsdcInput(e.target.value)} className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs outline-none text-white font-mono" />
-                                                <button onClick={handleMakeOffer} className="bg-sky-600 hover:bg-sky-500 text-white text-[10px] font-bold px-4 py-2.5 rounded-lg transition ml-2">
-                                                    FAIRE UNE OFFRE
-                                                </button>
-                                            </div>
-                                        ) : (
-                                            <button onClick={handleBuyTicket} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-8 py-3.5 rounded-xl transition shadow-[0_0_15px_rgba(16,185,129,0.3)]">
-                                                ACHETER ({currentEventPrice} USDC)
-                                            </button>
-                                        )}
-                                    </div>
+                                    {/* NOUVEAU : Message d'erreur spécifique sous le bouton */}
+                                    {seatActionStatus.text && (
+                                        <div className={`w-full text-center text-xs font-bold p-3 rounded-xl border transition ${seatActionStatus.isError ? 'bg-red-900/20 border-red-800 text-red-400' : 'bg-emerald-900/20 border-emerald-800 text-emerald-400'}`}>
+                                            {seatActionStatus.isError ? '⚠️ ' : '✅ '} {seatActionStatus.text}
+                                        </div>
+                                    )}
                                 </div>
                             );
                         })()}
