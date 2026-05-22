@@ -2,11 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 
 // --- CONFIGURATION ARC TICKETING ---
-const FACTORY_ADDRESS = "0x197E11Bf5EddF28cA56f9A2BF40eb21eCa1C1a46"; 
-const USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
+// ⚠️ INSÈRE TA NOUVELLE ADRESSE D'USINE ICI ⚠️
+const FACTORY_ADDRESS = "0x4d6c0DcB5c2aA3270e061Ab549B378fFaAA9A776"; 
 
 const factoryABI = [
-    "function createNewEvent(string _eventName, string _flyerUrl, address _usdc, uint256 _price, uint256 _markup, uint256 _royalty, uint256 _eventStart, uint256 _deadline, uint256 _maxSeats) external",
+    "function createNewEvent(string _eventName, string _flyerUrl, uint256 _price, uint256 _markup, uint256 _royalty, uint256 _eventStart, uint256 _deadline, uint256 _maxSeats) external",
     "function getEventsByOrganizer(address _organizer) view returns (address[])",
     "function getAllEvents() view returns (tuple(address eventAddress, string eventName, string flyerUrl, uint256 eventStart)[])"
 ];
@@ -20,6 +20,7 @@ const ticketEventABI = [
     "function royaltyPercent() view returns (uint256)",
     "function refundDeadline() view returns (uint256)",
     "function maxSeats() view returns (uint256)",
+    "function isCancelled() view returns (bool)", 
     "function isMinted(uint256) view returns (bool)",
     "function isAvailableInTreasury(uint256) view returns (bool)",
     "function ownerOf(uint256 tokenId) view returns (address)",
@@ -28,19 +29,15 @@ const ticketEventABI = [
     "function updateMaxMarkup(uint256 newMarkup) external",
     "function updateRoyalty(uint256 newRoyalty) external",
     "function setRefundDeadline(uint256 newDeadlineTimestamp) external",
-    "function buyTicket(uint256 seatId) external",
+    "function cancelEvent() external", 
+    "function buyTicket(uint256 seatId) external payable",
     "function refundTicket(uint256 seatId) external", 
     "function listForResale(uint256 seatId, uint256 price) external",
-    "function buyResaleTicket(uint256 seatId) external",
+    "function buyResaleTicket(uint256 seatId) external payable",
     "function cancelResale(uint256 seatId) external",
-    "function makeOffer(uint256 targetSeatId, uint256 mySeatId, uint256 extraUsdc) external",
+    "function makeOffer(uint256 targetSeatId, uint256 mySeatId) external payable",
     "function acceptOffer(uint256 mySeatId) external",
     "function cancelOffer(uint256 targetSeatId) external"
-];
-
-const usdcABI = [
-    "function approve(address spender, uint256 amount) external returns (bool)",
-    "function allowance(address owner, address spender) view returns (uint256)"
 ];
 
 const getTomorrowLocalISO = () => {
@@ -54,23 +51,21 @@ export default function App() {
     const [signer, setSigner] = useState(null);
     const [userAddress, setUserAddress] = useState("");
     
-    // États globaux
     const [activeTab, setActiveTab] = useState("spectator"); 
     const [status, setStatus] = useState({ text: "", isError: false });
-    const [seatActionStatus, setSeatActionStatus] = useState({ text: "", isError: false }); // NOUVEAU : Message dédié au siège
+    const [seatActionStatus, setSeatActionStatus] = useState({ text: "", isError: false }); 
     
     const [myEvents, setMyEvents] = useState([]);
     const [allAvailableEvents, setAllAvailableEvents] = useState([]);
+    const [hiddenEvents, setHiddenEvents] = useState([]);
 
-    // États du panneau Organisateur
     const [selectedEvent, setSelectedEvent] = useState(null);
-    const [eventDetails, setEventDetails] = useState({ name: "", flyer: "", start: "", price: "0", markup: "0", royalty: "0", deadline: "", maxSeats: "0", deadlineUnix: 0 });
+    const [eventDetails, setEventDetails] = useState({ name: "", flyer: "", start: "", startUnix: 0, price: "0", markup: "0", royalty: "0", deadline: "", maxSeats: "0", deadlineUnix: 0, isCancelled: false });
     
-    // Formulaire
     const [eventName, setEventName] = useState("");
     const [flyerUrl, setFlyerUrl] = useState("https://images.unsplash.com/photo-1540039155732-68473638e4ce?w=800&q=80"); 
     const [startDate, setStartDate] = useState(getTomorrowLocalISO());
-    const [ticketPrice, setTicketPrice] = useState("100");
+    const [ticketPrice, setTicketPrice] = useState("10");
     const [maxMarkup, setMaxMarkup] = useState("20");
     const [royalty, setRoyalty] = useState("5");
     const [deadlineDate, setDeadlineDate] = useState(getTomorrowLocalISO());
@@ -80,18 +75,15 @@ export default function App() {
     const [modifRoyalty, setModifRoyalty] = useState("");
     const [modifDeadlineDate, setModifDeadlineDate] = useState(getTomorrowLocalISO());
 
-    // États du panneau Spectateur
     const [targetEvent, setTargetEvent] = useState(null); 
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [selectedSeat, setSelectedSeat] = useState(null);
     
-    // Suivi détaillé des sièges
     const [takenSeats, setTakenSeats] = useState([]);
     const [myOwnedSeats, setMyOwnedSeats] = useState([]);
     const [resaleListings, setResaleListings] = useState({}); 
     const [activeOffers, setActiveOffers] = useState({});     
     
-    // Inputs pour revente et offres
     const [resalePriceInput, setResalePriceInput] = useState(""); 
     const [offerSeatInput, setOfferSeatInput] = useState("0"); 
     const [offerUsdcInput, setOfferUsdcInput] = useState("");
@@ -99,10 +91,18 @@ export default function App() {
     const [currentEventTotalSeats, setCurrentEventTotalSeats] = useState(0); 
     const [currentEventPrice, setCurrentEventPrice] = useState("0"); 
     const [currentEventRefundDeadline, setCurrentEventRefundDeadline] = useState(0);
+    const [currentEventIsCancelled, setCurrentEventIsCancelled] = useState(false);
 
     const seatsPerRow = 10; 
 
-    // --- OUTILS UI ---
+    useEffect(() => {
+        if (window.ethereum) {
+            window.ethereum.on('accountsChanged', () => window.location.reload());
+        }
+        const savedHidden = JSON.parse(localStorage.getItem('hiddenArcEvents')) || [];
+        setHiddenEvents(savedHidden);
+    }, []);
+
     const showStatus = (text, isError) => {
         setStatus({ text, isError });
         setTimeout(() => setStatus({ text: "", isError: false }), 5000);
@@ -124,7 +124,6 @@ export default function App() {
         setTimeout(() => setTargetEvent(currentTarget), 100);
     };
 
-    // --- INITIALISATION ---
     const connectWallet = async () => {
         if (window.ethereum) {
             try {
@@ -143,6 +142,14 @@ export default function App() {
     const disconnectWallet = () => {
         setSigner(null); setProvider(null); setUserAddress("");
         setMyEvents([]); setSelectedEvent(null); setTargetEvent(null);
+    };
+
+    const hideEvent = (eventAddress, e) => {
+        e.stopPropagation();
+        const updatedHidden = [...hiddenEvents, eventAddress];
+        setHiddenEvents(updatedHidden);
+        localStorage.setItem('hiddenArcEvents', JSON.stringify(updatedHidden));
+        if (selectedEvent === eventAddress) setSelectedEvent(null);
     };
 
     const loadOrganizerEvents = async (address, currentProvider) => {
@@ -175,18 +182,20 @@ export default function App() {
             const roy = await eventContract.royaltyPercent();
             const dead = await eventContract.refundDeadline();
             const seats = await eventContract.maxSeats();
+            const isCancelled = await eventContract.isCancelled();
             
             const startFormatted = new Date(Number(start) * 1000).toLocaleString('fr-FR');
             const deadlineFormatted = Number(dead) === 0 ? "Désactivé" : new Date(Number(dead) * 1000).toLocaleString('fr-FR');
 
             setEventDetails({
-                name, flyer, start: startFormatted,
-                price: ethers.formatUnits(price, 6),
+                name, flyer, start: startFormatted, startUnix: Number(start),
+                price: ethers.formatEther(price),
                 markup: markup.toString(),
                 royalty: roy.toString(),
                 deadline: deadlineFormatted,
                 deadlineUnix: Number(dead),
-                maxSeats: seats.toString() 
+                maxSeats: seats.toString(),
+                isCancelled
             });
             setSelectedEvent(eventAddress);
             showStatus("Contrat chargé !", false);
@@ -198,12 +207,12 @@ export default function App() {
         try {
             showStatus("Création en cours (veuillez signer)...", false);
             const factory = new ethers.Contract(FACTORY_ADDRESS, factoryABI, signer);
-            const priceInUnits = ethers.parseUnits(ticketPrice, 6);
+            const priceInUnits = ethers.parseEther(ticketPrice);
             
             const unixStart = Math.floor(new Date(startDate).getTime() / 1000);
             const unixDeadline = Math.floor(new Date(deadlineDate).getTime() / 1000);
             
-            const tx = await factory.createNewEvent(eventName, flyerUrl, USDC_ADDRESS, priceInUnits, maxMarkup, royalty, unixStart, unixDeadline, formSeats);
+            const tx = await factory.createNewEvent(eventName, flyerUrl, priceInUnits, maxMarkup, royalty, unixStart, unixDeadline, formSeats);
             await tx.wait();
             
             showStatus("✅ Événement créé !", false);
@@ -257,6 +266,25 @@ export default function App() {
         } catch (err) { showStatus("❌ Échec", true); }
     };
 
+    const handleCancelEvent = async () => {
+        try {
+            const now = Math.floor(Date.now() / 1000);
+            if (now >= eventDetails.startUnix) {
+                return showStatus("❌ Impossible : Le spectacle a déjà commencé.", true);
+            }
+
+            if (!window.confirm("⚠️ ATTENTION : Êtes-vous sûr de vouloir annuler ce spectacle ?\n\n- Cette action est irréversible.\n- Le remboursement automatique sera ouvert à tous les spectateurs possédant un billet.")) return;
+            
+            showStatus("Annulation en cours...", false);
+            const contract = new ethers.Contract(selectedEvent, ticketEventABI, signer);
+            const tx = await contract.cancelEvent();
+            await tx.wait();
+            
+            showStatus("🚨 Événement annulé avec succès !", false);
+            selectEventForManagement(selectedEvent);
+        } catch (err) { showStatus("❌ Échec de l'annulation", true); console.error(err); }
+    };
+
     const getSeatIdNumber = (seatStr) => {
         if (!seatStr || seatStr === "0") return 0;
         const rowIndex = seatStr.charCodeAt(0) - 65; 
@@ -278,10 +306,13 @@ export default function App() {
                     const contract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, provider);
                     
                     const rawPrice = await contract.ticketPrice();
-                    setCurrentEventPrice(ethers.formatUnits(rawPrice, 6));
+                    setCurrentEventPrice(ethers.formatEther(rawPrice));
 
                     const deadline = await contract.refundDeadline();
                     setCurrentEventRefundDeadline(Number(deadline));
+
+                    const cancelled = await contract.isCancelled();
+                    setCurrentEventIsCancelled(cancelled);
 
                     const totalSeatsFromBlockchain = Number(await contract.maxSeats());
                     setCurrentEventTotalSeats(totalSeatsFromBlockchain);
@@ -306,7 +337,7 @@ export default function App() {
                                 taken: minted && !inTreasury,
                                 owner: owner,
                                 resaleListed: resaleData ? resaleData.isListed : false,
-                                resalePrice: resaleData && resaleData.isListed ? ethers.formatUnits(resaleData.price, 6) : "0",
+                                resalePrice: resaleData && resaleData.isListed ? ethers.formatEther(resaleData.price) : "0",
                                 offer: offerData && offerData.active ? offerData : null
                             };
                         })());
@@ -328,7 +359,7 @@ export default function App() {
                             newOffers[seatIdStr] = {
                                 bidder: r.offer.bidder,
                                 offeredTicketStr: r.offer.offeredTicketId > 0 ? getSeatString(Number(r.offer.offeredTicketId)) : "Aucun",
-                                usdcAmount: ethers.formatUnits(r.offer.usdcAmount, 6)
+                                usdcAmount: ethers.formatEther(r.offer.usdcAmount)
                             };
                         }
                     });
@@ -341,33 +372,27 @@ export default function App() {
                 } catch (error) { console.error(error); }
             } else {
                 setTakenSeats([]); setMyOwnedSeats([]); setResaleListings({}); setActiveOffers({});
-                setCurrentEventTotalSeats(0); setCurrentEventPrice("0"); setCurrentEventRefundDeadline(0);
+                setCurrentEventTotalSeats(0); setCurrentEventPrice("0"); setCurrentEventRefundDeadline(0); setCurrentEventIsCancelled(false);
             }
         };
         fetchSeatsAndData();
     }, [targetEvent, provider, userAddress]);
 
-    // --- ACTIONS SPECTATEUR (Avec affichage des erreurs en bas) ---
     const handleBuyTicket = async () => {
         if (!targetEvent) return;
         try {
-            showSeatStatus("Approbation du paiement USDC...", false);
+            showSeatStatus("Transaction en cours...", false);
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
-            const usdcContract = new ethers.Contract(USDC_ADDRESS, usdcABI, signer);
             
-            const rawPrice = ethers.parseUnits(currentEventPrice, 6);
-            const approveTx = await usdcContract.approve(targetEvent.eventAddress, rawPrice);
-            await approveTx.wait();
-
-            showSeatStatus("Achat de la place en cours...", false);
-            const numericalSeatId = getSeatIdNumber(selectedSeat);
-            const buyTx = await eventContract.buyTicket(numericalSeatId);
+            const rawPrice = ethers.parseEther(currentEventPrice);
+            // La transaction native (msg.value) simplifie tout !
+            const buyTx = await eventContract.buyTicket(getSeatIdNumber(selectedSeat), { value: rawPrice });
             await buyTx.wait();
 
             showSeatStatus("Acheté avec succès !", false);
             setSelectedSeat(null);
             refreshSpectatorGrid();
-        } catch (err) { showSeatStatus("Échec de la transaction", true); }
+        } catch (err) { showSeatStatus("Échec de la transaction (Fonds insuffisants ou annulé)", true); }
     };
 
     const handleRefundTicket = async () => {
@@ -379,10 +404,10 @@ export default function App() {
             const tx = await eventContract.refundTicket(numericalSeatId);
             await tx.wait();
             
-            showSeatStatus("Billet remboursé !", false);
+            showSeatStatus("Billet remboursé ! L'argent est de retour.", false);
             setSelectedSeat(null);
             refreshSpectatorGrid();
-        } catch (err) { showSeatStatus("Échec du remboursement (Délai dépassé ?)", true); }
+        } catch (err) { showSeatStatus("Échec du remboursement", true); }
     };
 
     const handleListForResale = async () => {
@@ -391,7 +416,7 @@ export default function App() {
             showSeatStatus("Mise en vente sur le marché secondaire...", false);
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             const numericalSeatId = getSeatIdNumber(selectedSeat);
-            const priceInUnits = ethers.parseUnits(resalePriceInput, 6);
+            const priceInUnits = ethers.parseEther(resalePriceInput);
             
             const tx = await eventContract.listForResale(numericalSeatId, priceInUnits);
             await tx.wait();
@@ -400,7 +425,7 @@ export default function App() {
             setResalePriceInput("");
             setSelectedSeat(null);
             refreshSpectatorGrid();
-        } catch (err) { showSeatStatus("Échec : Le prix dépasse le plafond autorisé", true); }
+        } catch (err) { showSeatStatus("Échec de la mise en vente (Plafond dépassé)", true); }
     };
 
     const handleCancelResale = async () => {
@@ -420,24 +445,19 @@ export default function App() {
 
     const handleBuyResaleTicket = async () => {
         try {
-            showSeatStatus("Approbation du paiement USDC...", false);
+            showSeatStatus("Achat sur le marché secondaire...", false);
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
-            const usdcContract = new ethers.Contract(USDC_ADDRESS, usdcABI, signer);
             
             const priceStr = resaleListings[selectedSeat];
-            const rawPrice = ethers.parseUnits(priceStr, 6);
-            const approveTx = await usdcContract.approve(targetEvent.eventAddress, rawPrice);
-            await approveTx.wait();
-
-            showSeatStatus("Achat sur le marché secondaire...", false);
-            const numericalSeatId = getSeatIdNumber(selectedSeat);
-            const buyTx = await eventContract.buyResaleTicket(numericalSeatId);
+            const rawPrice = ethers.parseEther(priceStr);
+            
+            const buyTx = await eventContract.buyResaleTicket(getSeatIdNumber(selectedSeat), { value: rawPrice });
             await buyTx.wait();
 
             showSeatStatus("Billet de revente acheté !", false);
             setSelectedSeat(null);
             refreshSpectatorGrid();
-        } catch (err) { showSeatStatus("Échec de l'achat", true); }
+        } catch (err) { showSeatStatus("Échec de l'achat (Fonds insuffisants ?)", true); }
     };
 
     const handleMakeOffer = async () => {
@@ -446,28 +466,21 @@ export default function App() {
                 return showSeatStatus("Votre offre ne peut pas être vide", true);
             }
 
-            showSeatStatus("Envoi de l'offre (Approbation USDC si besoin)...", false);
+            showSeatStatus("Envoi de l'offre (Mise sous séquestre)...", false);
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             
-            const extraUsdcRaw = ethers.parseUnits(offerUsdcInput || "0", 6);
-            if (Number(offerUsdcInput) > 0) {
-                const usdcContract = new ethers.Contract(USDC_ADDRESS, usdcABI, signer);
-                const approveTx = await usdcContract.approve(targetEvent.eventAddress, extraUsdcRaw);
-                await approveTx.wait();
-            }
-
-            showSeatStatus("Mise sous séquestre des éléments de l'offre...", false);
+            const extraUsdcRaw = ethers.parseEther(offerUsdcInput || "0");
             const targetIdNum = getSeatIdNumber(selectedSeat);
             const mySeatIdNum = getSeatIdNumber(offerSeatInput);
             
-            const tx = await eventContract.makeOffer(targetIdNum, mySeatIdNum, extraUsdcRaw);
+            const tx = await eventContract.makeOffer(targetIdNum, mySeatIdNum, { value: extraUsdcRaw });
             await tx.wait();
 
             showSeatStatus("Offre envoyée avec succès !", false);
             setSelectedSeat(null);
             setOfferUsdcInput("");
             refreshSpectatorGrid();
-        } catch (err) { showSeatStatus("Échec : Plafond dépassé ou offre déjà existante", true); }
+        } catch (err) { showSeatStatus("Échec (Fonds insuffisants, offre invalide ou refusée)", true); console.error(err); }
     };
 
     const handleAcceptOffer = async () => {
@@ -529,13 +542,13 @@ export default function App() {
                     </div>
                 </header>
 
-                {/* Statut Global */}
                 {status.text && (
                     <div className="text-center text-sm font-mono p-3 bg-slate-900 border border-slate-800 rounded-xl">
                         <span className={status.isError ? 'text-red-400' : 'text-emerald-400'}>{status.text}</span>
                     </div>
                 )}
 
+                {/* --- ORGANISATEUR --- */}
                 {activeTab === 'organizer' && (
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in">
                         <div className="lg:col-span-1 flex flex-col gap-6">
@@ -574,7 +587,6 @@ export default function App() {
                                             <input type="number" value={maxMarkup} onChange={(e) => setMaxMarkup(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono" required />
                                         </div>
                                         <div>
-                                            {/* NOUVEAU: Le champ Royalties est maintenant bien visible ! */}
                                             <label className="text-[9px] text-slate-500 uppercase font-bold">Royalties (%)</label>
                                             <input type="number" value={royalty} onChange={(e) => setRoyalty(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono text-orange-400" required />
                                         </div>
@@ -585,13 +597,18 @@ export default function App() {
                             
                             <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-lg flex-1">
                                 <h3 className="text-xs font-bold text-slate-300 mb-4 uppercase tracking-wider">Mes Événements</h3>
-                                {myEvents.length === 0 ? <p className="text-slate-500 text-xs italic text-center py-4">Aucun événement.</p> : (
+                                {myEvents.filter(evt => !hiddenEvents.includes(evt)).length === 0 ? <p className="text-slate-500 text-xs italic text-center py-4">Aucun événement visible.</p> : (
                                     <div className="flex flex-col gap-2 max-h-[250px] overflow-y-auto">
-                                        {myEvents.map((evt, idx) => (
-                                            <button key={idx} onClick={() => selectEventForManagement(evt)} className={`w-full text-left bg-slate-950 hover:bg-slate-800 border p-3 rounded-xl flex flex-col transition ${selectedEvent === evt ? 'border-violet-500 shadow-[0_0_10px_rgba(139,92,246,0.2)]' : 'border-slate-800'}`}>
-                                                <span className="text-violet-400 font-bold text-xs">Événement #{idx + 1}</span>
-                                                <span className="text-slate-500 font-mono text-[9px] truncate mt-0.5">{evt}</span>
-                                            </button>
+                                        {myEvents.filter(evt => !hiddenEvents.includes(evt)).map((evt, idx) => (
+                                            <div key={idx} className={`w-full flex items-center bg-slate-950 hover:bg-slate-800 border rounded-xl transition ${selectedEvent === evt ? 'border-violet-500 shadow-[0_0_10px_rgba(139,92,246,0.2)]' : 'border-slate-800'}`}>
+                                                <button onClick={() => selectEventForManagement(evt)} className="flex-1 text-left p-3 flex flex-col">
+                                                    <span className="text-violet-400 font-bold text-xs">Événement #{idx + 1}</span>
+                                                    <span className="text-slate-500 font-mono text-[9px] truncate mt-0.5">{evt}</span>
+                                                </button>
+                                                <button onClick={(e) => hideEvent(evt, e)} className="p-3 text-slate-600 hover:text-red-400 transition" title="Cacher cet événement">
+                                                    🗑️
+                                                </button>
+                                            </div>
                                         ))}
                                     </div>
                                 )}
@@ -603,11 +620,21 @@ export default function App() {
                                 <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-lg h-full flex flex-col">
                                     <div className="flex gap-4 mb-6 bg-slate-950 p-4 rounded-xl border border-slate-800">
                                         <img src={eventDetails.flyer} alt="Flyer" className="w-24 h-24 object-cover rounded-lg border border-slate-700" onError={(e) => e.target.src = 'https://via.placeholder.com/150/1e293b/a78bfa?text=Image+Invalide'} />
-                                        <div>
+                                        <div className="flex-1">
                                             <h3 className="text-xl font-bold text-violet-400 mb-1">{eventDetails.name}</h3>
                                             <p className="text-sky-300 text-xs font-bold mb-2">📅 Le {eventDetails.start}</p>
                                             <p className="text-slate-500 font-mono text-[10px] truncate">{selectedEvent}</p>
                                         </div>
+                                        {!eventDetails.isCancelled && (
+                                            <button onClick={handleCancelEvent} className="bg-red-900/40 hover:bg-red-600 border border-red-700 text-white font-bold text-xs px-4 rounded-xl transition self-start h-10">
+                                                ANNULER L'ÉVÉNEMENT
+                                            </button>
+                                        )}
+                                        {eventDetails.isCancelled && (
+                                            <div className="bg-red-600 text-white font-bold text-xs px-4 py-2 rounded-xl self-start">
+                                                ÉVÉNEMENT ANNULÉ
+                                            </div>
+                                        )}
                                     </div>
                                     
                                     <div className="grid grid-cols-3 gap-4 mb-8">
@@ -620,7 +647,12 @@ export default function App() {
                                             <p className="text-xl font-bold text-violet-400 mt-1">{eventDetails.maxSeats} <span className="text-xs text-slate-500">places</span></p>
                                         </div>
                                         <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-center relative overflow-hidden group">
-                                            {eventDetails.deadlineUnix > 0 ? (
+                                            {eventDetails.isCancelled ? (
+                                                <div className="flex flex-col items-center justify-center h-full text-emerald-400">
+                                                    <p className="text-[10px] font-bold uppercase">Remboursements</p>
+                                                    <p className="text-sm font-bold">Ouverts à tous</p>
+                                                </div>
+                                            ) : eventDetails.deadlineUnix > 0 ? (
                                                 <>
                                                     <p className="text-[10px] text-slate-500 uppercase font-bold group-hover:opacity-0 transition">Limite Remboursement</p>
                                                     <p className="text-xs font-bold text-emerald-400 mt-2 truncate group-hover:opacity-0 transition">{eventDetails.deadline}</p>
@@ -637,6 +669,7 @@ export default function App() {
                                         </div>
                                     </div>
 
+                                    {!eventDetails.isCancelled && (
                                     <div className="flex flex-col gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800">
                                         <p className="text-xs font-bold text-slate-400 uppercase tracking-wide border-b border-slate-800 pb-2 mb-1">Paramètres Modifiables</p>
                                         <form onSubmit={handleUpdateMarkup} className="flex items-end gap-3 justify-between">
@@ -661,6 +694,7 @@ export default function App() {
                                             </div>
                                         </form>
                                     </div>
+                                    )}
                                 </div>
                             ) : (
                                 <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl h-full flex flex-col items-center justify-center text-center text-slate-500 border-dashed">
@@ -672,6 +706,7 @@ export default function App() {
                     </div>
                 )}
 
+                {/* --- SPECTATEUR --- */}
                 {activeTab === 'spectator' && (
                     <div className="flex flex-col items-center animate-fade-in">
                         <div className="w-full max-w-3xl bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-lg mb-6">
@@ -728,6 +763,13 @@ export default function App() {
                                         <p className="text-slate-300 font-mono text-xs bg-slate-900/50 px-2 py-1 rounded border border-slate-700 backdrop-blur-md">{formatAddress(targetEvent.eventAddress)}</p>
                                     </div>
                                 </div>
+                            </div>
+                        )}
+                        
+                        {currentEventIsCancelled && (
+                            <div className="w-full max-w-3xl mb-6 bg-red-900/40 border border-red-600 p-4 rounded-xl text-center">
+                                <h3 className="text-red-400 font-bold text-lg">⚠️ ÉVÉNEMENT ANNULÉ</h3>
+                                <p className="text-slate-300 text-xs mt-1">L'organisateur a annulé ce spectacle. Les achats et échanges sont suspendus. Si vous possédez un billet, vous pouvez demander un remboursement immédiat ci-dessous.</p>
                             </div>
                         )}
 
@@ -801,7 +843,7 @@ export default function App() {
                             const resalePrice = isResale ? resaleListings[selectedSeat] : null;
                             const incomingOffer = activeOffers[selectedSeat];
                             
-                            const isRefundActive = currentEventRefundDeadline > Math.floor(Date.now() / 1000);
+                            const isRefundActive = currentEventIsCancelled || currentEventRefundDeadline > Math.floor(Date.now() / 1000);
 
                             return (
                                 <div className="mt-6 w-full max-w-3xl bg-slate-950 border border-slate-800 p-5 rounded-2xl flex flex-col animate-fade-in shadow-2xl gap-4">
@@ -823,9 +865,11 @@ export default function App() {
                                                                     : `Contre ${incomingOffer.usdcAmount} USDC`}
                                                             </p>
                                                         </div>
+                                                        {!currentEventIsCancelled && (
                                                         <button onClick={handleAcceptOffer} className="bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition">
                                                             ACCEPTER L'OFFRE
                                                         </button>
+                                                        )}
                                                     </div>
                                                 ) : isResale ? (
                                                     <>
@@ -844,19 +888,21 @@ export default function App() {
                                                             <p className="text-[10px] text-slate-500 text-center font-bold">Remboursements terminés</p>
                                                         )}
                                                         
+                                                        {!currentEventIsCancelled && (
                                                         <div className="flex gap-2">
                                                             <input type="number" placeholder="Prix USDC" value={resalePriceInput} onChange={(e) => setResalePriceInput(e.target.value)} className="w-24 bg-slate-900 border border-slate-700 rounded-xl px-3 text-xs outline-none text-white font-mono" />
                                                             <button onClick={handleListForResale} className="bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold px-6 py-3 rounded-xl transition flex-1">
                                                                 METTRE EN VENTE
                                                             </button>
                                                         </div>
+                                                        )}
                                                     </div>
                                                 )
-                                            ) : isResale ? (
+                                            ) : isResale && !currentEventIsCancelled ? (
                                                 <button onClick={handleBuyResaleTicket} className="bg-orange-500 hover:bg-orange-400 text-white text-xs font-bold px-8 py-3.5 rounded-xl transition shadow-[0_0_15px_rgba(249,115,22,0.3)]">
                                                     ACHETER REVENTE ({resalePrice} USDC)
                                                 </button>
-                                            ) : isTaken ? (
+                                            ) : isTaken && !currentEventIsCancelled ? (
                                                 <div className="flex flex-col sm:flex-row gap-2 items-center bg-slate-900 p-2 rounded-xl border border-slate-800">
                                                     <select value={offerSeatInput} onChange={(e) => setOfferSeatInput(e.target.value)} className="bg-slate-950 border border-slate-700 text-white text-xs px-2 py-2 rounded-lg outline-none cursor-pointer">
                                                         <option value="0">Aucun billet (USDC uniquement)</option>
@@ -868,17 +914,18 @@ export default function App() {
                                                         FAIRE UNE OFFRE
                                                     </button>
                                                 </div>
-                                            ) : (
+                                            ) : !currentEventIsCancelled ? (
                                                 <button onClick={handleBuyTicket} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-8 py-3.5 rounded-xl transition shadow-[0_0_15px_rgba(16,185,129,0.3)]">
                                                     ACHETER ({currentEventPrice} USDC)
                                                 </button>
+                                            ) : (
+                                                <p className="text-red-500 font-bold text-xs">Achat impossible (Événement annulé)</p>
                                             )}
                                         </div>
                                     </div>
                                     
-                                    {/* NOUVEAU : Message d'erreur spécifique sous le bouton */}
                                     {seatActionStatus.text && (
-                                        <div className={`w-full text-center text-xs font-bold p-3 rounded-xl border transition ${seatActionStatus.isError ? 'bg-red-900/20 border-red-800 text-red-400' : 'bg-emerald-900/20 border-emerald-800 text-emerald-400'}`}>
+                                        <div className={`w-full text-center text-xs font-bold p-3 rounded-xl border transition mt-4 ${seatActionStatus.isError ? 'bg-red-900/20 border-red-800 text-red-400' : 'bg-emerald-900/20 border-emerald-800 text-emerald-400'}`}>
                                             {seatActionStatus.isError ? '⚠️ ' : '✅ '} {seatActionStatus.text}
                                         </div>
                                     )}
