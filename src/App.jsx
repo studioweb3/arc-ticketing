@@ -56,7 +56,10 @@ export default function App() {
     
     const [myEvents, setMyEvents] = useState([]);
     const [allAvailableEvents, setAllAvailableEvents] = useState([]);
+    
+    // Corbeille et affichage
     const [hiddenEvents, setHiddenEvents] = useState([]);
+    const [showHiddenEvents, setShowHiddenEvents] = useState(false);
 
     const [selectedEvent, setSelectedEvent] = useState(null);
     const [eventDetails, setEventDetails] = useState({ name: "", flyer: "", start: "", startUnix: 0, price: "0", markup: "0", royalty: "0", deadline: "", maxSeats: "0", deadlineUnix: 0, isCancelled: false });
@@ -153,6 +156,14 @@ export default function App() {
         if (selectedEvent === eventAddress) setSelectedEvent(null);
     };
 
+    const restoreEvent = (eventAddress, e) => {
+        e.stopPropagation();
+        const updatedHidden = hiddenEvents.filter(addr => addr !== eventAddress);
+        setHiddenEvents(updatedHidden);
+        localStorage.setItem('hiddenArcEvents', JSON.stringify(updatedHidden));
+        if (updatedHidden.length === 0) setShowHiddenEvents(false);
+    };
+
     const loadOrganizerEvents = async (address, currentProvider) => {
         try {
             const factory = new ethers.Contract(FACTORY_ADDRESS, factoryABI, currentProvider);
@@ -185,8 +196,9 @@ export default function App() {
             const seats = await eventContract.maxSeats();
             const isCancelled = await eventContract.isCancelled();
             
-            const startFormatted = new Date(Number(start) * 1000).toLocaleString('fr-FR');
-            const deadlineFormatted = Number(dead) === 0 ? "Désactivé" : new Date(Number(dead) * 1000).toLocaleString('fr-FR');
+            const dateOptions = { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' };
+            const startFormatted = new Date(Number(start) * 1000).toLocaleString('fr-FR', dateOptions);
+            const deadlineFormatted = Number(dead) === 0 ? "Désactivé" : new Date(Number(dead) * 1000).toLocaleString('fr-FR', dateOptions);
 
             setEventDetails({
                 name, flyer, start: startFormatted, startUnix: Number(start),
@@ -503,6 +515,11 @@ export default function App() {
 
     const mySeatsWithOffers = myOwnedSeats.filter(seat => activeOffers[seat]);
 
+    // Variable qui gère l'affichage correct (actifs ou corbeille)
+    const displayEvents = showHiddenEvents 
+        ? myEvents.filter(evt => hiddenEvents.includes(evt)) 
+        : myEvents.filter(evt => !hiddenEvents.includes(evt));
+
     if (!signer) {
         return (
             <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6">
@@ -541,8 +558,8 @@ export default function App() {
                             />
                         </div>
                         
-                        <p className="text-slate-500 text-[10px] font-mono text-center break-all w-full bg-slate-50 p-2 rounded-lg border border-slate-200">
-                            {userAddress}
+                        <p className="text-slate-500 text-[10px] font-mono text-center w-full bg-slate-50 p-2 rounded-lg border border-slate-200">
+                            {formatAddress(userAddress)}
                         </p>
                     </div>
                 </div>
@@ -577,6 +594,7 @@ export default function App() {
                     </div>
                 )}
 
+                {/* --- ORGANISATEUR --- */}
                 {activeTab === 'organizer' && (
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in">
                         <div className="lg:col-span-1 flex flex-col gap-6">
@@ -624,18 +642,34 @@ export default function App() {
                             </div>
                             
                             <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-lg flex-1">
-                                <h3 className="text-xs font-bold text-slate-300 mb-4 uppercase tracking-wider">Mes Événements</h3>
-                                {myEvents.filter(evt => !hiddenEvents.includes(evt)).length === 0 ? <p className="text-slate-500 text-xs italic text-center py-4">Aucun événement visible.</p> : (
-                                    <div className="flex flex-col gap-2 max-h-[250px] overflow-y-auto">
-                                        {myEvents.filter(evt => !hiddenEvents.includes(evt)).map((evt, idx) => (
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                                        {showHiddenEvents ? "Corbeille" : "Mes Événements"}
+                                    </h3>
+                                    {hiddenEvents.length > 0 && (
+                                        <button onClick={() => setShowHiddenEvents(!showHiddenEvents)} className="text-[10px] text-slate-400 hover:text-violet-400 transition bg-slate-800 px-2 py-1 rounded">
+                                            {showHiddenEvents ? "Voir les actifs" : `Corbeille (${hiddenEvents.length})`}
+                                        </button>
+                                    )}
+                                </div>
+
+                                {displayEvents.length === 0 ? <p className="text-slate-500 text-xs italic text-center py-4">Aucun événement {showHiddenEvents ? "dans la corbeille" : "visible"}.</p> : (
+                                    <div className="flex flex-col gap-2 max-h-[250px] overflow-y-auto pr-1">
+                                        {displayEvents.map((evt, idx) => (
                                             <div key={idx} className={`w-full flex items-center bg-slate-950 hover:bg-slate-800 border rounded-xl transition ${selectedEvent === evt ? 'border-violet-500 shadow-[0_0_10px_rgba(139,92,246,0.2)]' : 'border-slate-800'}`}>
                                                 <button onClick={() => selectEventForManagement(evt)} className="flex-1 text-left p-3 flex flex-col">
-                                                    <span className="text-violet-400 font-bold text-xs">Événement #{idx + 1}</span>
+                                                    <span className="text-violet-400 font-bold text-xs">Événement {formatAddress(evt)}</span>
                                                     <span className="text-slate-500 font-mono text-[9px] truncate mt-0.5">{evt}</span>
                                                 </button>
-                                                <button onClick={(e) => hideEvent(evt, e)} className="p-3 text-slate-600 hover:text-red-400 transition" title="Cacher cet événement">
-                                                    🗑️
-                                                </button>
+                                                {showHiddenEvents ? (
+                                                    <button onClick={(e) => restoreEvent(evt, e)} className="p-3 text-slate-500 hover:text-emerald-400 transition" title="Restaurer cet événement">
+                                                        ♻️
+                                                    </button>
+                                                ) : (
+                                                    <button onClick={(e) => hideEvent(evt, e)} className="p-3 text-slate-600 hover:text-red-400 transition" title="Cacher cet événement">
+                                                        🗑️
+                                                    </button>
+                                                )}
                                             </div>
                                         ))}
                                     </div>
@@ -734,6 +768,7 @@ export default function App() {
                     </div>
                 )}
 
+                {/* --- SPECTATEUR --- */}
                 {activeTab === 'spectator' && (
                     <div className="flex flex-col items-center animate-fade-in">
                         
@@ -770,7 +805,8 @@ export default function App() {
                                             <p className="p-4 text-xs text-slate-500 text-center">Aucun événement créé sur le réseau.</p>
                                         ) : (
                                             allAvailableEvents.map((evt, idx) => {
-                                                const formattedStart = new Date(Number(evt.eventStart) * 1000).toLocaleString('fr-FR');
+                                                const dateOptions = { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' };
+                                                const formattedStart = new Date(Number(evt.eventStart) * 1000).toLocaleString('fr-FR', dateOptions);
                                                 return (
                                                 <div key={idx} onClick={() => { setTargetEvent(evt); setIsDropdownOpen(false); }} className="flex gap-4 p-3.5 border-b border-slate-800 hover:bg-slate-800 cursor-pointer transition items-center">
                                                     <img src={evt.flyerUrl} alt="" className="w-12 h-12 object-cover rounded-md border border-slate-700" onError={(e) => e.target.src = 'https://via.placeholder.com/50/1e293b/a78bfa'} />
@@ -795,7 +831,7 @@ export default function App() {
                                     <div>
                                         <h2 className="text-3xl font-bold text-white mb-1 drop-shadow-md">{targetEvent.eventName}</h2>
                                         <p className="text-sky-400 text-sm font-bold flex items-center gap-2">
-                                            <span>📅</span> {new Date(Number(targetEvent.eventStart) * 1000).toLocaleString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                            <span>📅</span> {new Date(Number(targetEvent.eventStart) * 1000).toLocaleString('fr-FR', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                                         </p>
                                     </div>
                                     <div className="text-right">
