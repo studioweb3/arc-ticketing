@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 
 // --- CONFIGURATION ARC TICKETING ---
-// ⚠️ INSÈRE TA NOUVELLE ADRESSE D'USINE ICI ⚠️
 const FACTORY_ADDRESS = "0x4d6c0DcB5c2aA3270e061Ab549B378fFaAA9A776"; 
 
 const factoryABI = [
@@ -92,6 +91,8 @@ export default function App() {
     const [currentEventPrice, setCurrentEventPrice] = useState("0"); 
     const [currentEventRefundDeadline, setCurrentEventRefundDeadline] = useState(0);
     const [currentEventIsCancelled, setCurrentEventIsCancelled] = useState(false);
+
+    const [showQRModal, setShowQRModal] = useState(false);
 
     const seatsPerRow = 10; 
 
@@ -385,7 +386,6 @@ export default function App() {
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             
             const rawPrice = ethers.parseEther(currentEventPrice);
-            // La transaction native (msg.value) simplifie tout !
             const buyTx = await eventContract.buyTicket(getSeatIdNumber(selectedSeat), { value: rawPrice });
             await buyTx.wait();
 
@@ -501,6 +501,8 @@ export default function App() {
     const totalRowsNeeded = Math.ceil(currentEventTotalSeats / seatsPerRow);
     const generatedRowsArray = Array.from({ length: totalRowsNeeded }, (_, i) => String.fromCharCode(65 + i));
 
+    const mySeatsWithOffers = myOwnedSeats.filter(seat => activeOffers[seat]);
+
     if (!signer) {
         return (
             <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6">
@@ -518,7 +520,34 @@ export default function App() {
     }
 
     return (
-        <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center p-6 pb-24">
+        <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center p-6 pb-24 relative">
+            
+            {showQRModal && selectedSeat && targetEvent && (
+                <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-4 animate-fade-in">
+                    <div className="bg-white p-8 rounded-3xl shadow-2xl flex flex-col items-center max-w-sm w-full relative">
+                        <button onClick={() => setShowQRModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-900 text-xl font-bold">&times;</button>
+                        <h2 className="text-slate-900 font-bold text-xl mb-1">{targetEvent.eventName}</h2>
+                        <p className="text-violet-600 font-black text-3xl mb-6">SIÈGE {selectedSeat}</p>
+                        
+                        <div className="border-4 border-slate-100 rounded-xl p-2 mb-6">
+                            <img 
+                                src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(JSON.stringify({
+                                    contract: targetEvent.eventAddress,
+                                    seat: selectedSeat,
+                                    owner: userAddress
+                                }))}`} 
+                                alt="QR Code Billet" 
+                                className="w-48 h-48"
+                            />
+                        </div>
+                        
+                        <p className="text-slate-500 text-[10px] font-mono text-center break-all w-full bg-slate-50 p-2 rounded-lg border border-slate-200">
+                            {userAddress}
+                        </p>
+                    </div>
+                </div>
+            )}
+
             <div className="w-full max-w-5xl grid grid-cols-1 gap-6">
                 
                 <header className="flex justify-between items-center border-b border-slate-800 pb-4">
@@ -548,7 +577,6 @@ export default function App() {
                     </div>
                 )}
 
-                {/* --- ORGANISATEUR --- */}
                 {activeTab === 'organizer' && (
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in">
                         <div className="lg:col-span-1 flex flex-col gap-6">
@@ -579,7 +607,7 @@ export default function App() {
                                             <input type="number" value={formSeats} onChange={(e) => setFormSeats(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono text-violet-400" required />
                                         </div>
                                         <div>
-                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Prix (USDC)</label>
+                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Prix (ARC)</label>
                                             <input type="number" value={ticketPrice} onChange={(e) => setTicketPrice(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono" required />
                                         </div>
                                         <div>
@@ -640,7 +668,7 @@ export default function App() {
                                     <div className="grid grid-cols-3 gap-4 mb-8">
                                         <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-center">
                                             <p className="text-[10px] text-slate-500 uppercase font-bold">Prix d'Achat</p>
-                                            <p className="text-xl font-bold text-white mt-1">{eventDetails.price} <span className="text-xs text-slate-500">USDC</span></p>
+                                            <p className="text-xl font-bold text-white mt-1">{eventDetails.price} <span className="text-xs text-slate-500">ARC</span></p>
                                         </div>
                                         <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-center">
                                             <p className="text-[10px] text-slate-500 uppercase font-bold">Jauge</p>
@@ -706,9 +734,21 @@ export default function App() {
                     </div>
                 )}
 
-                {/* --- SPECTATEUR --- */}
                 {activeTab === 'spectator' && (
                     <div className="flex flex-col items-center animate-fade-in">
+                        
+                        {mySeatsWithOffers.length > 0 && targetEvent && (
+                            <div className="w-full max-w-3xl mb-4 bg-sky-900/40 border border-sky-500 p-4 rounded-xl flex items-center justify-between shadow-[0_0_15px_rgba(14,165,233,0.3)]">
+                                <div className="flex items-center gap-3">
+                                    <span className="text-2xl animate-bounce">🔔</span>
+                                    <div>
+                                        <p className="text-sky-300 font-bold text-sm">Vous avez des offres en attente !</p>
+                                        <p className="text-slate-300 text-xs mt-0.5">Cliquez sur les sièges lumineux ({mySeatsWithOffers.join(', ')}) pour voir les propositions.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                         <div className="w-full max-w-3xl bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-lg mb-6">
                             <label className="text-[10px] text-sky-400 uppercase font-bold ml-1">📍 Quelle salle voulez-vous rejoindre ?</label>
                             
@@ -801,11 +841,14 @@ export default function App() {
                                                 const isOwned = myOwnedSeats.includes(seatIdStr);
                                                 const isResale = Object.keys(resaleListings).includes(seatIdStr);
                                                 const isSelected = selectedSeat === seatIdStr;
+                                                const hasIncomingOffer = isOwned && activeOffers[seatIdStr]; 
 
                                                 let seatStyle = "bg-sky-600 hover:bg-sky-400 cursor-pointer text-white"; 
                                                 
                                                 if (isSelected) {
                                                     seatStyle = "bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.6)] scale-110 z-10 relative text-white"; 
+                                                } else if (hasIncomingOffer) {
+                                                    seatStyle = "bg-violet-500 ring-2 ring-sky-400 animate-pulse text-white cursor-pointer shadow-[0_0_15px_rgba(56,189,248,0.6)]";
                                                 } else if (isOwned) {
                                                     seatStyle = isResale ? "bg-violet-500 border-2 border-orange-400 cursor-pointer text-white" : "bg-violet-500 hover:bg-violet-400 cursor-pointer shadow-[0_0_10px_rgba(139,92,246,0.4)] text-white";
                                                 } else if (isResale) {
@@ -851,6 +894,12 @@ export default function App() {
                                         <div>
                                             <p className="text-white font-bold text-sm">Siège sélectionné : <span className="text-emerald-400">{selectedSeat}</span></p>
                                             <p className="text-slate-500 text-xs mt-1">Numéro Blockchain : #{getSeatIdNumber(selectedSeat)}</p>
+                                            
+                                            {isOwned && !isResale && !incomingOffer && (
+                                                <button onClick={() => setShowQRModal(true)} className="mt-3 bg-violet-600/20 hover:bg-violet-600/40 border border-violet-500/50 text-violet-300 text-xs font-bold px-4 py-2 rounded-lg transition flex items-center gap-2">
+                                                    <span>🎟️</span> AFFICHER MON BILLET
+                                                </button>
+                                            )}
                                         </div>
                                         
                                         <div className="flex items-center gap-4">
@@ -861,8 +910,8 @@ export default function App() {
                                                             <p className="text-xs text-sky-300 font-bold">🎉 Offre d'achat/échange reçue !</p>
                                                             <p className="text-[10px] text-slate-300">
                                                                 {incomingOffer.offeredTicketStr !== "Aucun" 
-                                                                    ? `Contre le siège ${incomingOffer.offeredTicketStr} + ${incomingOffer.usdcAmount} USDC`
-                                                                    : `Contre ${incomingOffer.usdcAmount} USDC`}
+                                                                    ? `Contre le siège ${incomingOffer.offeredTicketStr} + ${incomingOffer.usdcAmount} ARC`
+                                                                    : `Contre ${incomingOffer.usdcAmount} ARC`}
                                                             </p>
                                                         </div>
                                                         {!currentEventIsCancelled && (
@@ -873,7 +922,7 @@ export default function App() {
                                                     </div>
                                                 ) : isResale ? (
                                                     <>
-                                                        <span className="text-orange-400 font-bold text-xs">En vente : {resalePrice} USDC</span>
+                                                        <span className="text-orange-400 font-bold text-xs">En vente : {resalePrice} ARC</span>
                                                         <button onClick={handleCancelResale} className="bg-red-600 hover:bg-red-500 text-white text-xs font-bold px-6 py-3.5 rounded-xl transition">
                                                             ANNULER LA VENTE
                                                         </button>
@@ -890,7 +939,7 @@ export default function App() {
                                                         
                                                         {!currentEventIsCancelled && (
                                                         <div className="flex gap-2">
-                                                            <input type="number" placeholder="Prix USDC" value={resalePriceInput} onChange={(e) => setResalePriceInput(e.target.value)} className="w-24 bg-slate-900 border border-slate-700 rounded-xl px-3 text-xs outline-none text-white font-mono" />
+                                                            <input type="number" placeholder="Prix ARC" value={resalePriceInput} onChange={(e) => setResalePriceInput(e.target.value)} className="w-24 bg-slate-900 border border-slate-700 rounded-xl px-3 text-xs outline-none text-white font-mono" />
                                                             <button onClick={handleListForResale} className="bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold px-6 py-3 rounded-xl transition flex-1">
                                                                 METTRE EN VENTE
                                                             </button>
@@ -900,23 +949,23 @@ export default function App() {
                                                 )
                                             ) : isResale && !currentEventIsCancelled ? (
                                                 <button onClick={handleBuyResaleTicket} className="bg-orange-500 hover:bg-orange-400 text-white text-xs font-bold px-8 py-3.5 rounded-xl transition shadow-[0_0_15px_rgba(249,115,22,0.3)]">
-                                                    ACHETER REVENTE ({resalePrice} USDC)
+                                                    ACHETER REVENTE ({resalePrice} ARC)
                                                 </button>
                                             ) : isTaken && !currentEventIsCancelled ? (
                                                 <div className="flex flex-col sm:flex-row gap-2 items-center bg-slate-900 p-2 rounded-xl border border-slate-800">
                                                     <select value={offerSeatInput} onChange={(e) => setOfferSeatInput(e.target.value)} className="bg-slate-950 border border-slate-700 text-white text-xs px-2 py-2 rounded-lg outline-none cursor-pointer">
-                                                        <option value="0">Aucun billet (USDC uniquement)</option>
+                                                        <option value="0">Aucun billet (ARC uniquement)</option>
                                                         {myOwnedSeats.map(seat => <option key={seat} value={seat}>Mon siège {seat}</option>)}
                                                     </select>
                                                     <span className="text-slate-500 font-bold text-xs">+</span>
-                                                    <input type="number" placeholder="Montant USDC" value={offerUsdcInput} onChange={(e) => setOfferUsdcInput(e.target.value)} className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs outline-none text-white font-mono" />
+                                                    <input type="number" placeholder="Montant ARC" value={offerUsdcInput} onChange={(e) => setOfferUsdcInput(e.target.value)} className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs outline-none text-white font-mono" />
                                                     <button onClick={handleMakeOffer} className="bg-sky-600 hover:bg-sky-500 text-white text-[10px] font-bold px-4 py-2.5 rounded-lg transition ml-2">
                                                         FAIRE UNE OFFRE
                                                     </button>
                                                 </div>
                                             ) : !currentEventIsCancelled ? (
                                                 <button onClick={handleBuyTicket} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-8 py-3.5 rounded-xl transition shadow-[0_0_15px_rgba(16,185,129,0.3)]">
-                                                    ACHETER ({currentEventPrice} USDC)
+                                                    ACHETER ({currentEventPrice} ARC)
                                                 </button>
                                             ) : (
                                                 <p className="text-red-500 font-bold text-xs">Achat impossible (Événement annulé)</p>
