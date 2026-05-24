@@ -4,8 +4,8 @@ import { ethers } from 'ethers';
 // --- CONFIGURATION ARC TICKETING ---
 const FACTORY_ADDRESS = "0x4d6c0DcB5c2aA3270e061Ab549B378fFaAA9A776"; 
 
-// NOUVEAU : Configuration du réseau ARC Testnet pour MetaMask
-const TARGET_CHAIN_ID = "0x4cef52"; // 5042002 converti en Hexadécimal
+// Configuration du réseau ARC Testnet pour MetaMask
+const TARGET_CHAIN_ID = "0x4cef52"; 
 const TARGET_NETWORK_CONFIG = {
     chainId: TARGET_CHAIN_ID,
     chainName: 'ARC Testnet',
@@ -141,7 +141,6 @@ export default function App() {
         setTimeout(() => setTargetEvent(currentTarget), 100);
     };
 
-    // NOUVEAU : Vérifie et force MetaMask sur le réseau ARC
     const checkAndSwitchNetwork = async () => {
         if (!window.ethereum) return false;
         try {
@@ -178,10 +177,12 @@ export default function App() {
         }
     };
 
-    const connectWallet = async () => {
+    const connectWallet = async (initialTab) => {
         if (window.ethereum) {
             try {
-                // Vérification du réseau avant la connexion
+                // Mémorise le choix de l'utilisateur (Spectateur ou Organisateur)
+                setActiveTab(initialTab);
+
                 const isCorrectNetwork = await checkAndSwitchNetwork();
                 if (!isCorrectNetwork) return;
 
@@ -573,18 +574,59 @@ export default function App() {
         ? myEvents.filter(evt => hiddenEvents.includes(evt)) 
         : myEvents.filter(evt => !hiddenEvents.includes(evt));
 
+    // --- NOUVELLE PAGE D'ACCUEIL ---
     if (!signer) {
         return (
-            <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6">
-                <div className="bg-slate-900 border border-slate-800 p-8 rounded-2xl w-full max-w-md shadow-2xl text-center">
-                    <span className="text-5xl">🎟️</span>
-                    <h1 className="text-3xl font-bold bg-gradient-to-r from-violet-400 to-sky-400 bg-clip-text text-transparent mt-4 tracking-widest">ARC TICKET</h1>
-                    <p className="text-slate-500 text-xs mt-2 font-mono uppercase mb-8">Billetterie Décentralisée</p>
-                    <button onClick={connectWallet} className="w-full bg-violet-600 hover:bg-violet-500 text-white font-bold py-3 rounded-xl transition shadow-[0_0_15px_rgba(124,58,237,0.5)]">
-                        CONNECTER METAMASK
-                    </button>
-                    {status.text && <p className="mt-4 text-xs font-mono text-red-400">{status.text}</p>}
+            <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 relative overflow-hidden">
+                {/* Effet visuel d'arrière-plan */}
+                <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-violet-600/20 rounded-full blur-[100px] pointer-events-none"></div>
+                <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-sky-600/20 rounded-full blur-[100px] pointer-events-none"></div>
+
+                <div className="text-center mb-12 z-10">
+                    <span className="text-6xl mb-6 block">🎟️</span>
+                    <h1 className="text-5xl md:text-6xl font-black bg-gradient-to-r from-violet-400 to-sky-400 bg-clip-text text-transparent tracking-widest mb-4 drop-shadow-lg">ARC TICKET</h1>
+                    <p className="text-slate-400 font-mono uppercase tracking-[0.2em] text-sm md:text-base">La Billetterie Nouvelle Génération</p>
                 </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full max-w-3xl z-10">
+                    {/* Carte Spectateur */}
+                    <button 
+                        onClick={() => connectWallet('spectator')}
+                        className="bg-slate-900/80 backdrop-blur-md border-2 border-slate-800 hover:border-sky-500 p-8 rounded-3xl flex flex-col items-center text-center transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_0_30px_rgba(14,165,233,0.3)] group"
+                    >
+                        <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-6 group-hover:bg-sky-900/50 transition-colors">
+                            <span className="text-4xl">👀</span>
+                        </div>
+                        <h2 className="text-2xl font-bold text-sky-400 mb-3">Espace Spectateur</h2>
+                        <p className="text-slate-400 text-sm mb-8 px-4 leading-relaxed">Achetez, revendez et échangez vos billets de spectacles en toute sécurité. Le marché secondaire enfin équitable.</p>
+                        <div className="bg-sky-600 group-hover:bg-sky-500 text-white text-xs font-bold py-3 px-8 rounded-full transition-colors w-full uppercase tracking-wider">
+                            Connexion Web3
+                        </div>
+                    </button>
+
+                    {/* Carte Organisateur */}
+                    <button 
+                        onClick={() => connectWallet('organizer')}
+                        className="bg-slate-900/80 backdrop-blur-md border-2 border-slate-800 hover:border-violet-500 p-8 rounded-3xl flex flex-col items-center text-center transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_0_30px_rgba(139,92,246,0.3)] group"
+                    >
+                        <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-6 group-hover:bg-violet-900/50 transition-colors">
+                            <span className="text-4xl">🎭</span>
+                        </div>
+                        <h2 className="text-2xl font-bold text-violet-400 mb-3">Espace Organisateur</h2>
+                        <p className="text-slate-400 text-sm mb-8 px-4 leading-relaxed">Créez vos événements, maîtrisez vos jauges et collectez des royalties automatiques sur chaque revente.</p>
+                        <div className="bg-violet-600 group-hover:bg-violet-500 text-white text-xs font-bold py-3 px-8 rounded-full transition-colors w-full uppercase tracking-wider">
+                            Connexion Web3
+                        </div>
+                    </button>
+                </div>
+
+                {status.text && (
+                    <div className="mt-8 z-10 animate-fade-in">
+                        <p className="text-xs font-mono text-red-400 bg-red-900/20 px-6 py-3 rounded-xl border border-red-800/50 flex items-center gap-2">
+                            <span>⚠️</span> {status.text}
+                        </p>
+                    </div>
+                )}
             </div>
         );
     }
