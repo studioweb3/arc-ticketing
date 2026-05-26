@@ -56,7 +56,9 @@ const ticketEventABI = [
 const getTomorrowLocalISO = () => {
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
-    return new Date(tomorrow.getTime() - tomorrow.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    // CORRECTION : On s'assure de couper pile aux minutes pour éviter les bugs d'affichage des navigateurs
+    const isoString = new Date(tomorrow.getTime() - tomorrow.getTimezoneOffset() * 60000).toISOString();
+    return isoString.substring(0, 16); 
 };
 
 export default function App() {
@@ -111,16 +113,13 @@ export default function App() {
 
     const seatsPerRow = 10; 
 
-    // NOUVEAU : Auto-reconnexion au rafraîchissement
     useEffect(() => {
         const checkConnection = async () => {
             if (window.ethereum) {
                 try {
-                    // Vérifie si un compte est déjà connecté silencieusement
                     const accounts = await window.ethereum.request({ method: 'eth_accounts' });
                     if (accounts.length > 0) {
                         const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
-                        // Ne se reconnecte silencieusement que s'il est sur le bon réseau
                         if (currentChainId === TARGET_CHAIN_ID) {
                             const savedTab = localStorage.getItem('arcActiveTab') || 'spectator';
                             setActiveTab(savedTab);
@@ -132,7 +131,6 @@ export default function App() {
                             const address = await ethSigner.getAddress();
                             setUserAddress(address);
                             
-                            // Load events
                             const factory = new ethers.Contract(FACTORY_ADDRESS, factoryABI, browserProvider);
                             const orgEvents = await factory.getEventsByOrganizer(address);
                             setMyEvents(orgEvents);
@@ -217,7 +215,6 @@ export default function App() {
         if (window.ethereum) {
             try {
                 setActiveTab(initialTab);
-                // On sauvegarde le choix dans la mémoire du navigateur
                 localStorage.setItem('arcActiveTab', initialTab);
 
                 const isCorrectNetwork = await checkAndSwitchNetwork();
@@ -324,6 +321,8 @@ export default function App() {
             loadOrganizerEvents(userAddress, provider);
             loadGlobalEvents(provider);
             setEventName(""); 
+            // CORRECTION : On vide le panneau de droite après une création réussie
+            setSelectedEvent(null);
         } catch (err) { showStatus("❌ Échec de la création", true); }
     };
 
@@ -774,7 +773,7 @@ export default function App() {
                                         <label className="text-[9px] text-slate-500 uppercase font-bold">URL du Flyer (Image)</label>
                                         <input type="url" value={flyerUrl} onChange={(e) => setFlyerUrl(e.target.value)} placeholder="https://lien.jpg" className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-slate-200" required />
                                     </div>
-                                    <div className="grid grid-cols-2 gap-3">
+                                    <div className="grid grid-cols-1 gap-3">
                                         <div>
                                             <label className="text-[9px] text-slate-500 uppercase font-bold">Début du spectacle</label>
                                             <input type="datetime-local" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-sky-300" required />
@@ -822,7 +821,7 @@ export default function App() {
                                     <div className="flex flex-col gap-2 max-h-[250px] overflow-y-auto pr-1">
                                         {displayEvents.map((evt, idx) => (
                                             <div key={idx} className={`w-full flex items-center bg-slate-950 hover:bg-slate-800 border rounded-xl transition ${selectedEvent === evt ? 'border-violet-500 shadow-[0_0_10px_rgba(139,92,246,0.2)]' : 'border-slate-800'}`}>
-                                                <button onClick={() => selectEventForManagement(evt)} className="flex-1 text-left p-3 flex flex-col">
+                                                <button onClick={() => selectEventForManagement(evt)} className="flex-1 text-left p-3 flex flex-col overflow-hidden">
                                                     <span className="text-violet-400 font-bold text-xs">Événement {formatAddress(evt)}</span>
                                                     <span className="text-slate-500 font-mono text-[9px] truncate mt-0.5">{evt}</span>
                                                 </button>
@@ -899,25 +898,25 @@ export default function App() {
                                     {!eventDetails.isCancelled && (
                                     <div className="flex flex-col gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800">
                                         <p className="text-xs font-bold text-slate-400 uppercase tracking-wide border-b border-slate-800 pb-2 mb-1">Paramètres Modifiables</p>
-                                        <form onSubmit={handleUpdateMarkup} className="flex items-end gap-3 justify-between">
-                                            <div className="flex-1">
+                                        <form onSubmit={handleUpdateMarkup} className="flex flex-col sm:flex-row items-start sm:items-end gap-3 justify-between">
+                                            <div className="flex-1 w-full">
                                                 <label className="text-[10px] text-slate-500 font-bold">Plafond Anti-Scalping : <span className="text-violet-400 font-mono">{eventDetails.markup}%</span></label>
                                                 <input type="number" value={modifMarkup} onChange={(e) => setModifMarkup(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-800 px-3 py-2 rounded-lg text-xs outline-none focus:border-violet-500" required />
                                             </div>
-                                            <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 py-2 rounded-lg transition h-9">MàJ</button>
+                                            <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 py-2 rounded-lg transition h-9 w-full sm:w-auto">MàJ</button>
                                         </form>
-                                        <form onSubmit={handleUpdateRoyalty} className="flex items-end gap-3 justify-between mt-2">
-                                            <div className="flex-1">
+                                        <form onSubmit={handleUpdateRoyalty} className="flex flex-col sm:flex-row items-start sm:items-end gap-3 justify-between mt-2">
+                                            <div className="flex-1 w-full">
                                                 <label className="text-[10px] text-slate-500 font-bold">Royalties sur la Revente : <span className="text-violet-400 font-mono">{eventDetails.royalty}%</span></label>
                                                 <input type="number" value={modifRoyalty} onChange={(e) => setModifRoyalty(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-800 px-3 py-2 rounded-lg text-xs outline-none focus:border-violet-500" required />
                                             </div>
-                                            <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 py-2 rounded-lg transition h-9">MàJ</button>
+                                            <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 py-2 rounded-lg transition h-9 w-full sm:w-auto">MàJ</button>
                                         </form>
                                         <form onSubmit={handleUpdateDeadline} className="flex flex-col gap-2 mt-2">
                                             <label className="text-[10px] text-slate-500 font-bold">Repousser la fermeture des remboursements</label>
-                                            <div className="flex gap-3">
-                                                <input type="datetime-local" value={modifDeadlineDate} onChange={(e) => setModifDeadlineDate(e.target.value)} className="flex-1 bg-slate-900 border border-slate-800 px-3 py-2 rounded-lg text-xs outline-none focus:border-violet-500" required />
-                                                <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 rounded-lg transition h-9">Appliquer</button>
+                                            <div className="flex flex-col sm:flex-row gap-3">
+                                                <input type="datetime-local" value={modifDeadlineDate} onChange={(e) => setModifDeadlineDate(e.target.value)} className="flex-1 bg-slate-900 border border-slate-800 px-3 py-2 rounded-lg text-xs outline-none focus:border-violet-500 w-full" required />
+                                                <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 rounded-lg transition h-9 w-full sm:w-auto">Appliquer</button>
                                             </div>
                                         </form>
                                     </div>
