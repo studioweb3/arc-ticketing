@@ -114,11 +114,7 @@ const getTomorrowLocalISO = () => {
 
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // CORRECTION : On s'assure de couper pile aux minutes pour éviter les bugs d'affichage des navigateurs
-
-    const isoString = new Date(tomorrow.getTime() - tomorrow.getTimezoneOffset() * 60000).toISOString();
-
-    return isoString.substring(0, 16); 
+    return new Date(tomorrow.getTime() - tomorrow.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
 };
 
@@ -228,6 +224,8 @@ export default function App() {
 
 
 
+    // NOUVEAU : Auto-reconnexion au rafraîchissement
+
     useEffect(() => {
 
         const checkConnection = async () => {
@@ -236,11 +234,15 @@ export default function App() {
 
                 try {
 
+                    // Vérifie si un compte est déjà connecté silencieusement
+
                     const accounts = await window.ethereum.request({ method: 'eth_accounts' });
 
                     if (accounts.length > 0) {
 
                         const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+
+                        // Ne se reconnecte silencieusement que s'il est sur le bon réseau
 
                         if (currentChainId === TARGET_CHAIN_ID) {
 
@@ -263,6 +265,8 @@ export default function App() {
                             setUserAddress(address);
 
                             
+
+                            // Load events
 
                             const factory = new ethers.Contract(FACTORY_ADDRESS, factoryABI, browserProvider);
 
@@ -431,6 +435,8 @@ export default function App() {
             try {
 
                 setActiveTab(initialTab);
+
+                // On sauvegarde le choix dans la mémoire du navigateur
 
                 localStorage.setItem('arcActiveTab', initialTab);
 
@@ -643,10 +649,6 @@ export default function App() {
             loadGlobalEvents(provider);
 
             setEventName(""); 
-
-            // CORRECTION : On vide le panneau de droite après une création réussie
-
-            setSelectedEvent(null);
 
         } catch (err) { showStatus("❌ Échec de la création", true); }
 
@@ -1548,7 +1550,7 @@ export default function App() {
 
                                     </div>
 
-                                    <div className="grid grid-cols-1 gap-3">
+                                    <div className="grid grid-cols-2 gap-3">
 
                                         <div>
 
@@ -1644,7 +1646,7 @@ export default function App() {
 
                                             <div key={idx} className={`w-full flex items-center bg-slate-950 hover:bg-slate-800 border rounded-xl transition ${selectedEvent === evt ? 'border-violet-500 shadow-[0_0_10px_rgba(139,92,246,0.2)]' : 'border-slate-800'}`}>
 
-                                                <button onClick={() => selectEventForManagement(evt)} className="flex-1 text-left p-3 flex flex-col overflow-hidden">
+                                                <button onClick={() => selectEventForManagement(evt)} className="flex-1 text-left p-3 flex flex-col">
 
                                                     <span className="text-violet-400 font-bold text-xs">Événement {formatAddress(evt)}</span>
 
@@ -1798,9 +1800,9 @@ export default function App() {
 
                                         <p className="text-xs font-bold text-slate-400 uppercase tracking-wide border-b border-slate-800 pb-2 mb-1">Paramètres Modifiables</p>
 
-                                        <form onSubmit={handleUpdateMarkup} className="flex flex-col sm:flex-row items-start sm:items-end gap-3 justify-between">
+                                        <form onSubmit={handleUpdateMarkup} className="flex items-end gap-3 justify-between">
 
-                                            <div className="flex-1 w-full">
+                                            <div className="flex-1">
 
                                                 <label className="text-[10px] text-slate-500 font-bold">Plafond Anti-Scalping : <span className="text-violet-400 font-mono">{eventDetails.markup}%</span></label>
 
@@ -1808,13 +1810,13 @@ export default function App() {
 
                                             </div>
 
-                                            <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 py-2 rounded-lg transition h-9 w-full sm:w-auto">MàJ</button>
+                                            <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 py-2 rounded-lg transition h-9">MàJ</button>
 
                                         </form>
 
-                                        <form onSubmit={handleUpdateRoyalty} className="flex flex-col sm:flex-row items-start sm:items-end gap-3 justify-between mt-2">
+                                        <form onSubmit={handleUpdateRoyalty} className="flex items-end gap-3 justify-between mt-2">
 
-                                            <div className="flex-1 w-full">
+                                            <div className="flex-1">
 
                                                 <label className="text-[10px] text-slate-500 font-bold">Royalties sur la Revente : <span className="text-violet-400 font-mono">{eventDetails.royalty}%</span></label>
 
@@ -1822,7 +1824,7 @@ export default function App() {
 
                                             </div>
 
-                                            <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 py-2 rounded-lg transition h-9 w-full sm:w-auto">MàJ</button>
+                                            <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 py-2 rounded-lg transition h-9">MàJ</button>
 
                                         </form>
 
@@ -1830,11 +1832,11 @@ export default function App() {
 
                                             <label className="text-[10px] text-slate-500 font-bold">Repousser la fermeture des remboursements</label>
 
-                                            <div className="flex flex-col sm:flex-row gap-3">
+                                            <div className="flex gap-3">
 
-                                                <input type="datetime-local" value={modifDeadlineDate} onChange={(e) => setModifDeadlineDate(e.target.value)} className="flex-1 bg-slate-900 border border-slate-800 px-3 py-2 rounded-lg text-xs outline-none focus:border-violet-500 w-full" required />
+                                                <input type="datetime-local" value={modifDeadlineDate} onChange={(e) => setModifDeadlineDate(e.target.value)} className="flex-1 bg-slate-900 border border-slate-800 px-3 py-2 rounded-lg text-xs outline-none focus:border-violet-500" required />
 
-                                                <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 rounded-lg transition h-9 w-full sm:w-auto">Appliquer</button>
+                                                <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 rounded-lg transition h-9">Appliquer</button>
 
                                             </div>
 
@@ -2375,5 +2377,7 @@ export default function App() {
     );
 
 } 
+
+
 
 
