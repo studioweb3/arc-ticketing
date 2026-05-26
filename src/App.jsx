@@ -74,7 +74,6 @@ export default function App() {
     const [hiddenEvents, setHiddenEvents] = useState([]);
     const [showHiddenEvents, setShowHiddenEvents] = useState(false);
 
-    // NOUVEAU : État pour gérer la visibilité du formulaire de création
     const [isCreatingNew, setIsCreatingNew] = useState(true);
 
     const [selectedEvent, setSelectedEvent] = useState(null);
@@ -246,7 +245,7 @@ export default function App() {
         localStorage.setItem('hiddenArcEvents', JSON.stringify(updatedHidden));
         if (selectedEvent === eventAddress) {
             setSelectedEvent(null);
-            setIsCreatingNew(true); // On rouvre le panneau de création si l'event masqué était sélectionné
+            setIsCreatingNew(true); 
         }
     };
 
@@ -278,7 +277,7 @@ export default function App() {
         if (!provider) return;
         try {
             showStatus("Lecture des données...", false);
-            setIsCreatingNew(false); // NOUVEAU: Masque le formulaire de création
+            setIsCreatingNew(false); 
             
             const eventContract = new ethers.Contract(eventAddress, ticketEventABI, provider);
             
@@ -328,6 +327,7 @@ export default function App() {
             loadOrganizerEvents(userAddress, provider);
             loadGlobalEvents(provider);
             setEventName(""); 
+            setSelectedEvent(null);
         } catch (err) { showStatus("❌ Échec de la création", true); }
     };
 
@@ -768,7 +768,6 @@ export default function App() {
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in">
                         <div className="lg:col-span-1 flex flex-col gap-6">
                             
-                            {/* NOUVEAU : Logique d'affichage conditionnel (Accordéon) */}
                             {isCreatingNew ? (
                                 <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-lg animate-fade-in relative">
                                     {selectedEvent && (
