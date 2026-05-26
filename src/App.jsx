@@ -56,7 +56,6 @@ const ticketEventABI = [
 const getTomorrowLocalISO = () => {
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
-    // CORRECTION : On s'assure de couper pile aux minutes pour éviter les bugs d'affichage des navigateurs
     const isoString = new Date(tomorrow.getTime() - tomorrow.getTimezoneOffset() * 60000).toISOString();
     return isoString.substring(0, 16); 
 };
@@ -74,6 +73,9 @@ export default function App() {
     const [allAvailableEvents, setAllAvailableEvents] = useState([]);
     const [hiddenEvents, setHiddenEvents] = useState([]);
     const [showHiddenEvents, setShowHiddenEvents] = useState(false);
+
+    // NOUVEAU : État pour gérer la visibilité du formulaire de création
+    const [isCreatingNew, setIsCreatingNew] = useState(true);
 
     const [selectedEvent, setSelectedEvent] = useState(null);
     const [eventDetails, setEventDetails] = useState({ name: "", flyer: "", start: "", startUnix: 0, price: "0", markup: "0", royalty: "0", deadline: "", maxSeats: "0", deadlineUnix: 0, isCancelled: false });
@@ -242,7 +244,10 @@ export default function App() {
         const updatedHidden = [...hiddenEvents, eventAddress];
         setHiddenEvents(updatedHidden);
         localStorage.setItem('hiddenArcEvents', JSON.stringify(updatedHidden));
-        if (selectedEvent === eventAddress) setSelectedEvent(null);
+        if (selectedEvent === eventAddress) {
+            setSelectedEvent(null);
+            setIsCreatingNew(true); // On rouvre le panneau de création si l'event masqué était sélectionné
+        }
     };
 
     const restoreEvent = (eventAddress, e) => {
@@ -273,6 +278,8 @@ export default function App() {
         if (!provider) return;
         try {
             showStatus("Lecture des données...", false);
+            setIsCreatingNew(false); // NOUVEAU: Masque le formulaire de création
+            
             const eventContract = new ethers.Contract(eventAddress, ticketEventABI, provider);
             
             const name = await eventContract.eventName();
@@ -321,8 +328,6 @@ export default function App() {
             loadOrganizerEvents(userAddress, provider);
             loadGlobalEvents(provider);
             setEventName(""); 
-            // CORRECTION : On vide le panneau de droite après une création réussie
-            setSelectedEvent(null);
         } catch (err) { showStatus("❌ Échec de la création", true); }
     };
 
@@ -762,48 +767,70 @@ export default function App() {
                 {activeTab === 'organizer' && (
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in">
                         <div className="lg:col-span-1 flex flex-col gap-6">
-                            <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-lg">
-                                <h3 className="text-xs font-bold text-violet-400 mb-4 uppercase tracking-wider">Créer un Événement</h3>
-                                <form onSubmit={handleCreateEvent} className="flex flex-col gap-3">
-                                    <div>
-                                        <label className="text-[9px] text-slate-500 uppercase font-bold">Nom de l'événement</label>
-                                        <input type="text" value={eventName} onChange={(e) => setEventName(e.target.value)} placeholder="Ex: Concert Rock" className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-slate-200" required />
-                                    </div>
-                                    <div>
-                                        <label className="text-[9px] text-slate-500 uppercase font-bold">URL du Flyer (Image)</label>
-                                        <input type="url" value={flyerUrl} onChange={(e) => setFlyerUrl(e.target.value)} placeholder="https://lien.jpg" className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-slate-200" required />
-                                    </div>
-                                    <div className="grid grid-cols-1 gap-3">
+                            
+                            {/* NOUVEAU : Logique d'affichage conditionnel (Accordéon) */}
+                            {isCreatingNew ? (
+                                <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-lg animate-fade-in relative">
+                                    {selectedEvent && (
+                                        <button 
+                                            onClick={() => setIsCreatingNew(false)} 
+                                            className="absolute top-4 right-4 text-slate-500 hover:text-slate-300"
+                                        >
+                                            ✖
+                                        </button>
+                                    )}
+                                    <h3 className="text-xs font-bold text-violet-400 mb-4 uppercase tracking-wider">Créer un Événement</h3>
+                                    <form onSubmit={handleCreateEvent} className="flex flex-col gap-3">
                                         <div>
-                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Début du spectacle</label>
-                                            <input type="datetime-local" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-sky-300" required />
+                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Nom de l'événement</label>
+                                            <input type="text" value={eventName} onChange={(e) => setEventName(e.target.value)} placeholder="Ex: Concert Rock" className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-slate-200" required />
                                         </div>
                                         <div>
-                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Fin Remboursement</label>
-                                            <input type="datetime-local" value={deadlineDate} onChange={(e) => setDeadlineDate(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-orange-300" required />
+                                            <label className="text-[9px] text-slate-500 uppercase font-bold">URL du Flyer (Image)</label>
+                                            <input type="url" value={flyerUrl} onChange={(e) => setFlyerUrl(e.target.value)} placeholder="https://lien.jpg" className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-slate-200" required />
                                         </div>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <div>
-                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Places</label>
-                                            <input type="number" value={formSeats} onChange={(e) => setFormSeats(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono text-violet-400" required />
+                                        <div className="grid grid-cols-1 gap-3">
+                                            <div>
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">Début du spectacle</label>
+                                                <input type="datetime-local" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-sky-300" required />
+                                            </div>
+                                            <div>
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">Fin Remboursement</label>
+                                                <input type="datetime-local" value={deadlineDate} onChange={(e) => setDeadlineDate(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-orange-300" required />
+                                            </div>
                                         </div>
-                                        <div>
-                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Prix (USDC)</label>
-                                            <input type="number" value={ticketPrice} onChange={(e) => setTicketPrice(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono" required />
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">Places</label>
+                                                <input type="number" value={formSeats} onChange={(e) => setFormSeats(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono text-violet-400" required />
+                                            </div>
+                                            <div>
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">Prix (USDC)</label>
+                                                <input type="number" value={ticketPrice} onChange={(e) => setTicketPrice(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono" required />
+                                            </div>
+                                            <div>
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">Plafond Anti-Scalping (%)</label>
+                                                <input type="number" value={maxMarkup} onChange={(e) => setMaxMarkup(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono" required />
+                                            </div>
+                                            <div>
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">Royalties (%)</label>
+                                                <input type="number" value={royalty} onChange={(e) => setRoyalty(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono text-orange-400" required />
+                                            </div>
                                         </div>
-                                        <div>
-                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Plafond Anti-Scalping (%)</label>
-                                            <input type="number" value={maxMarkup} onChange={(e) => setMaxMarkup(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono" required />
-                                        </div>
-                                        <div>
-                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Royalties (%)</label>
-                                            <input type="number" value={royalty} onChange={(e) => setRoyalty(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono text-orange-400" required />
-                                        </div>
-                                    </div>
-                                    <button type="submit" className="mt-2 bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold py-2.5 rounded-xl transition">DÉPLOYER SUR LA BLOCKCHAIN</button>
-                                </form>
-                            </div>
+                                        <button type="submit" className="mt-2 bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold py-2.5 rounded-xl transition">DÉPLOYER SUR LA BLOCKCHAIN</button>
+                                    </form>
+                                </div>
+                            ) : (
+                                <button 
+                                    onClick={() => {
+                                        setIsCreatingNew(true);
+                                        setSelectedEvent(null);
+                                    }} 
+                                    className="bg-slate-900 border border-slate-800 hover:border-violet-500 p-5 rounded-2xl shadow-lg flex items-center justify-center gap-2 text-violet-400 font-bold text-xs transition animate-fade-in"
+                                >
+                                    <span>➕</span> CRÉER UN NOUVEL ÉVÉNEMENT
+                                </button>
+                            )}
                             
                             <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-lg flex-1">
                                 <div className="flex justify-between items-center mb-4">
@@ -843,7 +870,7 @@ export default function App() {
 
                         <div className="lg:col-span-2">
                             {selectedEvent && eventDetails.name ? (
-                                <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-lg h-full flex flex-col">
+                                <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-lg h-full flex flex-col animate-fade-in">
                                     <div className="flex gap-4 mb-6 bg-slate-950 p-4 rounded-xl border border-slate-800">
                                         <img src={eventDetails.flyer} alt="Flyer" className="w-24 h-24 object-cover rounded-lg border border-slate-700" onError={(e) => e.target.src = 'https://via.placeholder.com/150/1e293b/a78bfa?text=Image+Invalide'} />
                                         <div className="flex-1">
