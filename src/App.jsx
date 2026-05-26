@@ -360,26 +360,33 @@ export default function App() {
         return `${rowChar}${col}`;
     };
 
-    // --- FONCTION EXTERNALISÉE POUR METTRE A JOUR LA VUE ---
-    const fetchSeatsAndData = useCallback(async () => {
+    // --- FONCTION EXTERNALISÉE POUR LE POLLING (TEMPS RÉEL) ---
+    const fetchSeatsAndData = useCallback(async (isBackgroundUpdate = false) => {
         if (targetEvent && provider && userAddress) {
             try {
+                // On utilise un appel "propre" (sans cache) en injectant le provider
                 const contract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, provider);
                 
-                const rawPrice = await contract.ticketPrice();
-                setCurrentEventPrice(ethers.formatEther(rawPrice));
+                // Si on ne fait qu'une mise à jour silencieuse, on ne recharge pas les prix, juste les sièges
+                if (!isBackgroundUpdate) {
+                    const rawPrice = await contract.ticketPrice();
+                    setCurrentEventPrice(ethers.formatEther(rawPrice));
 
-                const deadline = await contract.refundDeadline();
-                setCurrentEventRefundDeadline(Number(deadline));
+                    const deadline = await contract.refundDeadline();
+                    setCurrentEventRefundDeadline(Number(deadline));
 
-                const cancelled = await contract.isCancelled();
-                setCurrentEventIsCancelled(cancelled);
+                    const cancelled = await contract.isCancelled();
+                    setCurrentEventIsCancelled(cancelled);
 
-                const totalSeatsFromBlockchain = Number(await contract.maxSeats());
-                setCurrentEventTotalSeats(totalSeatsFromBlockchain);
+                    const totalSeatsFromBlockchain = Number(await contract.maxSeats());
+                    setCurrentEventTotalSeats(totalSeatsFromBlockchain);
+                }
+
+                // Pour éviter le cache RPC, nous lisons l'état courant total
+                const totalSeats = currentEventTotalSeats > 0 ? currentEventTotalSeats : Number(await contract.maxSeats());
 
                 const promises = [];
-                for(let i = 1; i <= totalSeatsFromBlockchain; i++) {
+                for(let i = 1; i <= totalSeats; i++) {
                     promises.push((async () => {
                         const minted = await contract.isMinted(i);
                         const inTreasury = await contract.isAvailableInTreasury(i);
@@ -435,20 +442,21 @@ export default function App() {
             setTakenSeats([]); setMyOwnedSeats([]); setResaleListings({}); setActiveOffers({});
             setCurrentEventTotalSeats(0); setCurrentEventPrice("0"); setCurrentEventRefundDeadline(0); setCurrentEventIsCancelled(false);
         }
-    }, [targetEvent, provider, userAddress]);
+    }, [targetEvent, provider, userAddress, currentEventTotalSeats]);
 
+    // NOUVEAU : Le système de Polling (Vérifie la blockchain toutes les 5 secondes)
     useEffect(() => {
-        fetchSeatsAndData();
-    }, [fetchSeatsAndData]);
+        fetchSeatsAndData(false); // Premier chargement complet
+        
+        if (targetEvent) {
+            const intervalId = setInterval(() => {
+                fetchSeatsAndData(true); // Rafraîchissements silencieux
+            }, 5000);
+            
+            return () => clearInterval(intervalId); // Nettoyage si on quitte la salle
+        }
+    }, [targetEvent, fetchSeatsAndData]);
 
-    const refreshSpectatorGrid = () => {
-        // Double vérification pour palier au cache RPC
-        fetchSeatsAndData();
-        setTimeout(fetchSeatsAndData, 2000); 
-        setTimeout(fetchSeatsAndData, 5000);
-    };
-
-    // --- ACTIONS AVEC MISE À JOUR OPTIMISTE ---
     const handleBuyTicket = async () => {
         if (!targetEvent) return;
         try {
@@ -457,15 +465,16 @@ export default function App() {
             
             const rawPrice = ethers.parseEther(currentEventPrice);
             const buyTx = await eventContract.buyTicket(getSeatIdNumber(selectedSeat), { value: rawPrice });
-            await buyTx.wait();
-
-            // Mise à jour optimiste immédiate
+            
+            // Mise à jour optimiste IMMÉDIATE (sans attendre le réseau)
             setTakenSeats(prev => [...prev, selectedSeat]);
             setMyOwnedSeats(prev => [...prev, selectedSeat]);
+            
+            await buyTx.wait();
 
             showSeatStatus("Acheté avec succès !", false);
             setSelectedSeat(null);
-            refreshSpectatorGrid();
+            fetchSeatsAndData(true); // Force un refresh final après confirmation
         } catch (err) { showSeatStatus("Échec de la transaction (Fonds insuffisants ou annulé)", true); }
     };
 
@@ -475,17 +484,16 @@ export default function App() {
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             const numericalSeatId = getSeatIdNumber(selectedSeat);
             
+            // Optimisme
+            setTakenSeats(prev => prev.filter(s => s !== selectedSeat));
+            setMyOwnedSeats(prev => prev.filter(s => s !== selectedSeat));
+
             const tx = await eventContract.refundTicket(numericalSeatId);
             await tx.wait();
             
-            // Mise à jour optimiste
-            setTakenSeats(prev => prev.filter(s => s !== selectedSeat));
-            setMyOwnedSeats(prev => prev.filter(s => s !== selectedSeat));
-            setResaleListings(prev => { const n = {...prev}; delete n[selectedSeat]; return n; });
-
             showSeatStatus("Billet remboursé ! L'argent est de retour.", false);
             setSelectedSeat(null);
-            refreshSpectatorGrid();
+            fetchSeatsAndData(true);
         } catch (err) { showSeatStatus("Échec du remboursement", true); }
     };
 
@@ -497,16 +505,16 @@ export default function App() {
             const numericalSeatId = getSeatIdNumber(selectedSeat);
             const priceInUnits = ethers.parseEther(resalePriceInput);
             
+            // Optimisme
+            setResaleListings(prev => ({...prev, [selectedSeat]: resalePriceInput}));
+
             const tx = await eventContract.listForResale(numericalSeatId, priceInUnits);
             await tx.wait();
             
-            // Mise à jour optimiste
-            setResaleListings(prev => ({...prev, [selectedSeat]: resalePriceInput}));
-
             showSeatStatus("Place mise en revente !", false);
             setResalePriceInput("");
             setSelectedSeat(null);
-            refreshSpectatorGrid();
+            fetchSeatsAndData(true);
         } catch (err) { showSeatStatus("Échec de la mise en vente (Plafond dépassé)", true); }
     };
 
@@ -516,15 +524,15 @@ export default function App() {
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             const numericalSeatId = getSeatIdNumber(selectedSeat);
             
+            // Optimisme
+            setResaleListings(prev => { const n = {...prev}; delete n[selectedSeat]; return n; });
+
             const tx = await eventContract.cancelResale(numericalSeatId);
             await tx.wait();
             
-            // Mise à jour optimiste
-            setResaleListings(prev => { const n = {...prev}; delete n[selectedSeat]; return n; });
-
             showSeatStatus("Vente annulée !", false);
             setSelectedSeat(null);
-            refreshSpectatorGrid();
+            fetchSeatsAndData(true);
         } catch (err) { showSeatStatus("Échec de l'annulation", true); }
     };
 
@@ -536,16 +544,16 @@ export default function App() {
             const priceStr = resaleListings[selectedSeat];
             const rawPrice = ethers.parseEther(priceStr);
             
-            const buyTx = await eventContract.buyResaleTicket(getSeatIdNumber(selectedSeat), { value: rawPrice });
-            await buyTx.wait();
-
-            // Mise à jour optimiste
+            // Optimisme
             setMyOwnedSeats(prev => [...prev, selectedSeat]);
             setResaleListings(prev => { const n = {...prev}; delete n[selectedSeat]; return n; });
 
+            const buyTx = await eventContract.buyResaleTicket(getSeatIdNumber(selectedSeat), { value: rawPrice });
+            await buyTx.wait();
+
             showSeatStatus("Billet de revente acheté !", false);
             setSelectedSeat(null);
-            refreshSpectatorGrid();
+            fetchSeatsAndData(true);
         } catch (err) { showSeatStatus("Échec de l'achat (Fonds insuffisants ?)", true); }
     };
 
@@ -565,20 +573,10 @@ export default function App() {
             const tx = await eventContract.makeOffer(targetIdNum, mySeatIdNum, { value: extraUsdcRaw });
             await tx.wait();
 
-            // Mise à jour optimiste de l'affichage
-            setActiveOffers(prev => ({
-                ...prev,
-                [selectedSeat]: {
-                    bidder: userAddress,
-                    offeredTicketStr: offerSeatInput === "0" ? "Aucun" : offerSeatInput,
-                    usdcAmount: offerUsdcInput || "0"
-                }
-            }));
-
             showSeatStatus("Offre envoyée avec succès !", false);
             setSelectedSeat(null);
             setOfferUsdcInput("");
-            refreshSpectatorGrid();
+            fetchSeatsAndData(true);
         } catch (err) { showSeatStatus("Échec (Fonds insuffisants, offre invalide ou refusée)", true); console.error(err); }
     };
 
@@ -593,7 +591,7 @@ export default function App() {
 
             showSeatStatus("Échange/Vente validé !", false);
             setSelectedSeat(null);
-            refreshSpectatorGrid();
+            fetchSeatsAndData(true);
         } catch (err) { showSeatStatus("Échec de l'échange", true); }
     };
 
@@ -1147,3 +1145,4 @@ export default function App() {
         </div>
     );
 }
+
