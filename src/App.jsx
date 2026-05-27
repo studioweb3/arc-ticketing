@@ -462,17 +462,26 @@ export default function App() {
         }
     }, [targetEvent, provider, userAddress, currentEventTotalSeats]);
 
+    // MODIFICATION ICI : Polling étendu pour rafraîchir la liste globale des événements dans l'Espace Spectateur
     useEffect(() => {
+        // Fonction pour rafraîchir en silence
+        const refreshGlobalData = () => {
+            if (activeTab === 'spectator' && provider) {
+                loadGlobalEvents(provider);
+            }
+            if (targetEvent) {
+                fetchSeatsAndData(true); 
+            }
+        };
+
+        // Chargement initial
         fetchSeatsAndData(false); 
         
-        if (targetEvent) {
-            const intervalId = setInterval(() => {
-                fetchSeatsAndData(true); 
-            }, 5000);
-            
-            return () => clearInterval(intervalId); 
-        }
-    }, [targetEvent, fetchSeatsAndData]);
+        // Polling toutes les 5 secondes
+        const intervalId = setInterval(refreshGlobalData, 5000);
+        
+        return () => clearInterval(intervalId); 
+    }, [targetEvent, fetchSeatsAndData, activeTab, provider]);
 
     const handleBuyTicket = async () => {
         if (!targetEvent) return;
