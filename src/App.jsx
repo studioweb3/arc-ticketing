@@ -61,11 +61,22 @@ const getTomorrowLocalISO = () => {
 };
 
 export default function App() {
+    // --- GESTION DE LA LANGUE ---
+    const [lang, setLang] = useState(localStorage.getItem('arcLang') || 'FR');
+    
+    const toggleLang = () => {
+        const newLang = lang === 'FR' ? 'EN' : 'FR';
+        setLang(newLang);
+        localStorage.setItem('arcLang', newLang);
+    };
+
+    const t = useCallback((fr, en) => lang === 'FR' ? fr : en, [lang]);
+
     const [provider, setProvider] = useState(null);
     const [signer, setSigner] = useState(null);
     const [userAddress, setUserAddress] = useState("");
     
-    const [activeTab, setActiveTab] = useState(""); // Vide au départ pour forcer l'accueil
+    const [activeTab, setActiveTab] = useState(""); 
     const [status, setStatus] = useState({ text: "", isError: false });
     const [seatActionStatus, setSeatActionStatus] = useState({ text: "", isError: false }); 
     
@@ -115,6 +126,38 @@ export default function App() {
     const seatsPerRow = 10; 
 
     useEffect(() => {
+        const checkConnection = async () => {
+            if (window.ethereum) {
+                try {
+                    const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+                    if (accounts.length > 0) {
+                        const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+                        if (currentChainId === TARGET_CHAIN_ID) {
+                            const savedTab = localStorage.getItem('arcActiveTab') || 'spectator';
+                            setActiveTab(savedTab);
+                            
+                            const browserProvider = new ethers.BrowserProvider(window.ethereum);
+                            const ethSigner = await browserProvider.getSigner();
+                            setProvider(browserProvider);
+                            setSigner(ethSigner);
+                            const address = await ethSigner.getAddress();
+                            setUserAddress(address);
+                            
+                            const factory = new ethers.Contract(FACTORY_ADDRESS, factoryABI, browserProvider);
+                            const orgEvents = await factory.getEventsByOrganizer(address);
+                            setMyEvents(orgEvents);
+                            const allEvents = await factory.getAllEvents();
+                            setAllAvailableEvents(allEvents);
+                        }
+                    }
+                } catch (err) {
+                    console.error("Erreur d'auto-reconnexion:", err);
+                }
+            }
+        };
+
+        checkConnection();
+
         if (window.ethereum) {
             window.ethereum.on('accountsChanged', () => window.location.reload());
             window.ethereum.on('chainChanged', () => window.location.reload());
@@ -164,18 +207,18 @@ export default function App() {
                             });
                             return true;
                         } catch (addError) {
-                            showStatus("Veuillez ajouter le réseau ARC à MetaMask.", true);
+                            showStatus(t("Veuillez ajouter le réseau ARC à MetaMask.", "Please add the ARC network to MetaMask."), true);
                             return false;
                         }
                     } else {
-                        showStatus("Vous devez être sur le réseau ARC Testnet.", true);
+                        showStatus(t("Vous devez être sur le réseau ARC Testnet.", "You must be on the ARC Testnet network."), true);
                         return false;
                     }
                 }
             }
             return true;
         } catch (error) {
-            console.error("Erreur de réseau", error);
+            console.error(t("Erreur de réseau", "Network error"), error);
             return false;
         }
     };
@@ -200,10 +243,10 @@ export default function App() {
                 loadOrganizerEvents(address, browserProvider);
                 loadGlobalEvents(browserProvider);
             } catch (err) { 
-                showStatus("Erreur de connexion", true); 
+                showStatus(t("Erreur de connexion", "Connection error"), true); 
                 setActiveTab(""); 
             }
-        } else { showStatus("Veuillez installer MetaMask", true); }
+        } else { showStatus(t("Veuillez installer MetaMask", "Please install MetaMask"), true); }
     };
 
     const disconnectWallet = () => {
@@ -250,7 +293,7 @@ export default function App() {
     const selectEventForManagement = async (eventAddress) => {
         if (!provider) return;
         try {
-            showStatus("Lecture des données...", false);
+            showStatus(t("Lecture des données...", "Reading data..."), false);
             setIsCreatingNew(false); 
             
             const eventContract = new ethers.Contract(eventAddress, ticketEventABI, provider);
@@ -266,8 +309,9 @@ export default function App() {
             const isCancelled = await eventContract.isCancelled();
             
             const dateOptions = { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' };
-            const startFormatted = new Date(Number(start) * 1000).toLocaleString('fr-FR', dateOptions);
-            const deadlineFormatted = Number(dead) === 0 ? "Désactivé" : new Date(Number(dead) * 1000).toLocaleString('fr-FR', dateOptions);
+            const locale = lang === 'FR' ? 'fr-FR' : 'en-US';
+            const startFormatted = new Date(Number(start) * 1000).toLocaleString(locale, dateOptions);
+            const deadlineFormatted = Number(dead) === 0 ? t("Désactivé", "Disabled") : new Date(Number(dead) * 1000).toLocaleString(locale, dateOptions);
 
             setEventDetails({
                 name, flyer, start: startFormatted, startUnix: Number(start),
@@ -280,14 +324,14 @@ export default function App() {
                 isCancelled
             });
             setSelectedEvent(eventAddress);
-            showStatus("Contrat chargé !", false);
-        } catch (err) { showStatus("Erreur lors de la lecture", true); }
+            showStatus(t("Contrat chargé !", "Contract loaded!"), false);
+        } catch (err) { showStatus(t("Erreur lors de la lecture", "Error while reading"), true); }
     };
 
     const handleCreateEvent = async (e) => {
         e.preventDefault();
         try {
-            showStatus("Création en cours (veuillez signer)...", false);
+            showStatus(t("Création en cours (veuillez signer)...", "Creation in progress (please sign)..."), false);
             const factory = new ethers.Contract(FACTORY_ADDRESS, factoryABI, signer);
             const priceInUnits = ethers.parseEther(ticketPrice);
             
@@ -297,12 +341,12 @@ export default function App() {
             const tx = await factory.createNewEvent(eventName, flyerUrl, priceInUnits, maxMarkup, royalty, unixStart, unixDeadline, formSeats);
             await tx.wait();
             
-            showStatus("✅ Événement créé !", false);
+            showStatus(t("✅ Événement créé !", "✅ Event created!"), false);
             loadOrganizerEvents(userAddress, provider);
             loadGlobalEvents(provider);
             setEventName(""); 
             setSelectedEvent(null);
-        } catch (err) { showStatus("❌ Échec de la création", true); }
+        } catch (err) { showStatus(t("❌ Échec de la création", "❌ Creation failed"), true); }
     };
 
     const handleUpdateMarkup = async (e) => {
@@ -311,9 +355,9 @@ export default function App() {
             const contract = new ethers.Contract(selectedEvent, ticketEventABI, signer);
             const tx = await contract.updateMaxMarkup(modifMarkup);
             await tx.wait();
-            showStatus("✅ Plafond modifié !", false);
+            showStatus(t("✅ Plafond modifié !", "✅ Cap modified!"), false);
             selectEventForManagement(selectedEvent);
-        } catch (err) { showStatus("❌ Échec", true); }
+        } catch (err) { showStatus(t("❌ Échec", "❌ Failed"), true); }
     };
 
     const handleUpdateRoyalty = async (e) => {
@@ -322,9 +366,9 @@ export default function App() {
             const contract = new ethers.Contract(selectedEvent, ticketEventABI, signer);
             const tx = await contract.updateRoyalty(modifRoyalty);
             await tx.wait();
-            showStatus("✅ Royalties modifiées !", false);
+            showStatus(t("✅ Royalties modifiées !", "✅ Royalties modified!"), false);
             selectEventForManagement(selectedEvent);
-        } catch (err) { showStatus("❌ Échec", true); }
+        } catch (err) { showStatus(t("❌ Échec", "❌ Failed"), true); }
     };
 
     const handleUpdateDeadline = async (e) => {
@@ -334,9 +378,9 @@ export default function App() {
             const unixTimestamp = Math.floor(new Date(modifDeadlineDate).getTime() / 1000);
             const tx = await contract.setRefundDeadline(unixTimestamp);
             await tx.wait();
-            showStatus("✅ Date modifiée !", false);
+            showStatus(t("✅ Date modifiée !", "✅ Date modified!"), false);
             selectEventForManagement(selectedEvent);
-        } catch (err) { showStatus("❌ Échec", true); }
+        } catch (err) { showStatus(t("❌ Échec", "❌ Failed"), true); }
     };
 
     const handleDisableRefunds = async () => {
@@ -344,28 +388,28 @@ export default function App() {
             const contract = new ethers.Contract(selectedEvent, ticketEventABI, signer);
             const tx = await contract.setRefundDeadline(0);
             await tx.wait();
-            showStatus("🚫 Remboursements désactivés !", false);
+            showStatus(t("🚫 Remboursements désactivés !", "🚫 Refunds disabled!"), false);
             selectEventForManagement(selectedEvent);
-        } catch (err) { showStatus("❌ Échec", true); }
+        } catch (err) { showStatus(t("❌ Échec", "❌ Failed"), true); }
     };
 
     const handleCancelEvent = async () => {
         try {
             const now = Math.floor(Date.now() / 1000);
             if (now >= eventDetails.startUnix) {
-                return showStatus("❌ Impossible : Le spectacle a déjà commencé.", true);
+                return showStatus(t("❌ Impossible : Le spectacle a déjà commencé.", "❌ Impossible: The show has already started."), true);
             }
 
-            if (!window.confirm("⚠️ ATTENTION : Êtes-vous sûr de vouloir annuler ce spectacle ?\n\n- Cette action est irréversible.\n- Le remboursement automatique sera ouvert à tous les spectateurs possédant un billet.")) return;
+            if (!window.confirm(t("⚠️ ATTENTION : Êtes-vous sûr de vouloir annuler ce spectacle ?\n\n- Cette action est irréversible.\n- Le remboursement automatique sera ouvert à tous les spectateurs possédant un billet.", "⚠️ WARNING: Are you sure you want to cancel this show?\n\n- This action is irreversible.\n- Automatic refunds will be open to all spectators holding a ticket."))) return;
             
-            showStatus("Annulation en cours...", false);
+            showStatus(t("Annulation en cours...", "Cancellation in progress..."), false);
             const contract = new ethers.Contract(selectedEvent, ticketEventABI, signer);
             const tx = await contract.cancelEvent();
             await tx.wait();
             
-            showStatus("🚨 Événement annulé avec succès !", false);
+            showStatus(t("🚨 Événement annulé avec succès !", "🚨 Event cancelled successfully!"), false);
             selectEventForManagement(selectedEvent);
-        } catch (err) { showStatus("❌ Échec de l'annulation", true); console.error(err); }
+        } catch (err) { showStatus(t("❌ Échec de l'annulation", "❌ Cancellation failed"), true); console.error(err); }
     };
 
     const getSeatIdNumber = (seatStr) => {
@@ -444,7 +488,7 @@ export default function App() {
                     if (r.offer) {
                         newOffers[seatIdStr] = {
                             bidder: r.offer.bidder,
-                            offeredTicketStr: r.offer.offeredTicketId > 0 ? getSeatString(Number(r.offer.offeredTicketId)) : "Aucun",
+                            offeredTicketStr: r.offer.offeredTicketId > 0 ? getSeatString(Number(r.offer.offeredTicketId)) : t("Aucun", "None"),
                             usdcAmount: ethers.formatEther(r.offer.usdcAmount)
                         };
                     }
@@ -460,11 +504,9 @@ export default function App() {
             setTakenSeats([]); setMyOwnedSeats([]); setResaleListings({}); setActiveOffers({});
             setCurrentEventTotalSeats(0); setCurrentEventPrice("0"); setCurrentEventRefundDeadline(0); setCurrentEventIsCancelled(false);
         }
-    }, [targetEvent, provider, userAddress, currentEventTotalSeats]);
+    }, [targetEvent, provider, userAddress, currentEventTotalSeats, t]);
 
-    // MODIFICATION ICI : Polling étendu pour rafraîchir la liste globale des événements dans l'Espace Spectateur
     useEffect(() => {
-        // Fonction pour rafraîchir en silence
         const refreshGlobalData = () => {
             if (activeTab === 'spectator' && provider) {
                 loadGlobalEvents(provider);
@@ -474,10 +516,8 @@ export default function App() {
             }
         };
 
-        // Chargement initial
         fetchSeatsAndData(false); 
         
-        // Polling toutes les 5 secondes
         const intervalId = setInterval(refreshGlobalData, 5000);
         
         return () => clearInterval(intervalId); 
@@ -486,7 +526,7 @@ export default function App() {
     const handleBuyTicket = async () => {
         if (!targetEvent) return;
         try {
-            showSeatStatus("Transaction en cours...", false);
+            showSeatStatus(t("Transaction en cours...", "Transaction in progress..."), false);
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             
             const rawPrice = ethers.parseEther(currentEventPrice);
@@ -497,15 +537,15 @@ export default function App() {
             
             await buyTx.wait();
 
-            showSeatStatus("Acheté avec succès !", false);
+            showSeatStatus(t("Acheté avec succès !", "Successfully purchased!"), false);
             setSelectedSeat(null);
             fetchSeatsAndData(true); 
-        } catch (err) { showSeatStatus("Échec de la transaction (Fonds insuffisants ou annulé)", true); }
+        } catch (err) { showSeatStatus(t("Échec de la transaction (Fonds insuffisants ou annulé)", "Transaction failed (Insufficient funds or cancelled)"), true); }
     };
 
     const handleRefundTicket = async () => {
         try {
-            showSeatStatus("Demande de remboursement en cours...", false);
+            showSeatStatus(t("Demande de remboursement en cours...", "Refund request in progress..."), false);
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             const numericalSeatId = getSeatIdNumber(selectedSeat);
             
@@ -515,16 +555,16 @@ export default function App() {
             const tx = await eventContract.refundTicket(numericalSeatId);
             await tx.wait();
             
-            showSeatStatus("Billet remboursé ! L'argent est de retour.", false);
+            showSeatStatus(t("Billet remboursé ! L'argent est de retour.", "Ticket refunded! The money is back."), false);
             setSelectedSeat(null);
             fetchSeatsAndData(true);
-        } catch (err) { showSeatStatus("Échec du remboursement", true); }
+        } catch (err) { showSeatStatus(t("Échec du remboursement", "Refund failed"), true); }
     };
 
     const handleListForResale = async () => {
         try {
-            if (!resalePriceInput || Number(resalePriceInput) <= 0) return showSeatStatus("Entrez un prix valide", true);
-            showSeatStatus("Mise en vente sur le marché secondaire...", false);
+            if (!resalePriceInput || Number(resalePriceInput) <= 0) return showSeatStatus(t("Entrez un prix valide", "Enter a valid price"), true);
+            showSeatStatus(t("Mise en vente sur le marché secondaire...", "Listing on the secondary market..."), false);
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             const numericalSeatId = getSeatIdNumber(selectedSeat);
             const priceInUnits = ethers.parseEther(resalePriceInput);
@@ -534,16 +574,16 @@ export default function App() {
             const tx = await eventContract.listForResale(numericalSeatId, priceInUnits);
             await tx.wait();
             
-            showSeatStatus("Place mise en revente !", false);
+            showSeatStatus(t("Place mise en revente !", "Seat listed for resale!"), false);
             setResalePriceInput("");
             setSelectedSeat(null);
             fetchSeatsAndData(true);
-        } catch (err) { showSeatStatus("Échec de la mise en vente (Plafond dépassé)", true); }
+        } catch (err) { showSeatStatus(t("Échec de la mise en vente (Plafond dépassé)", "Listing failed (Cap exceeded)"), true); }
     };
 
     const handleCancelResale = async () => {
         try {
-            showSeatStatus("Annulation de la vente...", false);
+            showSeatStatus(t("Annulation de la vente...", "Cancelling sale..."), false);
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             const numericalSeatId = getSeatIdNumber(selectedSeat);
             
@@ -552,15 +592,15 @@ export default function App() {
             const tx = await eventContract.cancelResale(numericalSeatId);
             await tx.wait();
             
-            showSeatStatus("Vente annulée !", false);
+            showSeatStatus(t("Vente annulée !", "Sale cancelled!"), false);
             setSelectedSeat(null);
             fetchSeatsAndData(true);
-        } catch (err) { showSeatStatus("Échec de l'annulation", true); }
+        } catch (err) { showSeatStatus(t("Échec de l'annulation", "Cancellation failed"), true); }
     };
 
     const handleBuyResaleTicket = async () => {
         try {
-            showSeatStatus("Achat sur le marché secondaire...", false);
+            showSeatStatus(t("Achat sur le marché secondaire...", "Purchasing on the secondary market..."), false);
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             
             const priceStr = resaleListings[selectedSeat];
@@ -572,19 +612,19 @@ export default function App() {
             const buyTx = await eventContract.buyResaleTicket(getSeatIdNumber(selectedSeat), { value: rawPrice });
             await buyTx.wait();
 
-            showSeatStatus("Billet de revente acheté !", false);
+            showSeatStatus(t("Billet de revente acheté !", "Resale ticket purchased!"), false);
             setSelectedSeat(null);
             fetchSeatsAndData(true);
-        } catch (err) { showSeatStatus("Échec de l'achat (Fonds insuffisants ?)", true); }
+        } catch (err) { showSeatStatus(t("Échec de l'achat (Fonds insuffisants ?)", "Purchase failed (Insufficient funds?)"), true); }
     };
 
     const handleMakeOffer = async () => {
         try {
             if (offerSeatInput === "0" && (!offerUsdcInput || Number(offerUsdcInput) === 0)) {
-                return showSeatStatus("Votre offre ne peut pas être vide", true);
+                return showSeatStatus(t("Votre offre ne peut pas être vide", "Your offer cannot be empty"), true);
             }
 
-            showSeatStatus("Envoi de l'offre (Mise sous séquestre)...", false);
+            showSeatStatus(t("Envoi de l'offre (Mise sous séquestre)...", "Sending offer (Escrow)..."), false);
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             
             const extraUsdcRaw = ethers.parseEther(offerUsdcInput || "0");
@@ -598,31 +638,31 @@ export default function App() {
                 ...prev,
                 [selectedSeat]: {
                     bidder: userAddress,
-                    offeredTicketStr: offerSeatInput === "0" ? "Aucun" : offerSeatInput,
+                    offeredTicketStr: offerSeatInput === "0" ? t("Aucun", "None") : offerSeatInput,
                     usdcAmount: offerUsdcInput || "0"
                 }
             }));
 
-            showSeatStatus("Offre envoyée avec succès !", false);
+            showSeatStatus(t("Offre envoyée avec succès !", "Offer sent successfully!"), false);
             setSelectedSeat(null);
             setOfferUsdcInput("");
             fetchSeatsAndData(true);
-        } catch (err) { showSeatStatus("Échec (Fonds insuffisants, offre invalide ou refusée)", true); console.error(err); }
+        } catch (err) { showSeatStatus(t("Échec (Fonds insuffisants, offre invalide ou refusée)", "Failed (Insufficient funds, invalid or refused offer)"), true); console.error(err); }
     };
 
     const handleAcceptOffer = async () => {
         try {
-            showSeatStatus("Acceptation de l'offre...", false);
+            showSeatStatus(t("Acceptation de l'offre...", "Accepting offer..."), false);
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             const numericalSeatId = getSeatIdNumber(selectedSeat);
             
             const tx = await eventContract.acceptOffer(numericalSeatId);
             await tx.wait();
 
-            showSeatStatus("Échange/Vente validé !", false);
+            showSeatStatus(t("Échange/Vente validé !", "Exchange/Sale confirmed!"), false);
             setSelectedSeat(null);
             fetchSeatsAndData(true);
-        } catch (err) { showSeatStatus("Échec de l'échange", true); }
+        } catch (err) { showSeatStatus(t("Échec de l'échange", "Exchange failed"), true); }
     };
 
     const totalRowsNeeded = Math.ceil(currentEventTotalSeats / seatsPerRow);
@@ -638,13 +678,19 @@ export default function App() {
     if (!activeTab || !signer) {
         return (
             <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 relative overflow-hidden">
+                <div className="absolute top-6 right-6 z-50">
+                    <button onClick={toggleLang} className="bg-slate-900 border border-slate-800 text-slate-400 px-3 py-1.5 rounded-lg font-bold text-xs hover:text-white transition shadow-lg">
+                        {lang === 'FR' ? 'EN' : 'FR'}
+                    </button>
+                </div>
+
                 <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-violet-600/20 rounded-full blur-[100px] pointer-events-none"></div>
                 <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-sky-600/20 rounded-full blur-[100px] pointer-events-none"></div>
 
                 <div className="text-center mb-12 z-10">
                     <span className="text-6xl mb-6 block">🎟️</span>
                     <h1 className="text-5xl md:text-6xl font-black bg-gradient-to-r from-violet-400 to-sky-400 bg-clip-text text-transparent tracking-widest mb-4 drop-shadow-lg">ARC TICKET</h1>
-                    <p className="text-slate-400 font-mono uppercase tracking-[0.2em] text-sm md:text-base">La Billetterie Nouvelle Génération</p>
+                    <p className="text-slate-400 font-mono uppercase tracking-[0.2em] text-sm md:text-base">{t("La Billetterie Nouvelle Génération", "The Next Generation Ticketing")}</p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full max-w-3xl z-10">
@@ -655,10 +701,10 @@ export default function App() {
                         <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-6 group-hover:bg-sky-900/50 transition-colors">
                             <span className="text-4xl">👀</span>
                         </div>
-                        <h2 className="text-2xl font-bold text-sky-400 mb-3">Espace Spectateur</h2>
-                        <p className="text-slate-400 text-sm mb-8 px-4 leading-relaxed">Achetez, revendez et échangez vos billets de spectacles en toute sécurité. Le marché secondaire enfin équitable.</p>
+                        <h2 className="text-2xl font-bold text-sky-400 mb-3">{t("Espace Spectateur", "Spectator Area")}</h2>
+                        <p className="text-slate-400 text-sm mb-8 px-4 leading-relaxed">{t("Achetez, revendez et échangez vos billets de spectacles en toute sécurité. Le marché secondaire enfin équitable.", "Buy, resell and exchange your event tickets securely. The secondary market, finally fair.")}</p>
                         <div className="bg-sky-600 group-hover:bg-sky-500 text-white text-xs font-bold py-3 px-8 rounded-full transition-colors w-full uppercase tracking-wider">
-                            Connexion Web3
+                            {t("Connexion Web3", "Web3 Login")}
                         </div>
                     </button>
 
@@ -669,10 +715,10 @@ export default function App() {
                         <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-6 group-hover:bg-violet-900/50 transition-colors">
                             <span className="text-4xl">🎭</span>
                         </div>
-                        <h2 className="text-2xl font-bold text-violet-400 mb-3">Espace Organisateur</h2>
-                        <p className="text-slate-400 text-sm mb-8 px-4 leading-relaxed">Créez vos événements, maîtrisez vos jauges et collectez des royalties automatiques sur chaque revente.</p>
+                        <h2 className="text-2xl font-bold text-violet-400 mb-3">{t("Espace Organisateur", "Organizer Area")}</h2>
+                        <p className="text-slate-400 text-sm mb-8 px-4 leading-relaxed">{t("Créez vos événements, maîtrisez vos jauges et collectez des royalties automatiques sur chaque revente.", "Create your events, control your capacity and collect automatic royalties on every resale.")}</p>
                         <div className="bg-violet-600 group-hover:bg-violet-500 text-white text-xs font-bold py-3 px-8 rounded-full transition-colors w-full uppercase tracking-wider">
-                            Connexion Web3
+                            {t("Connexion Web3", "Web3 Login")}
                         </div>
                     </button>
                 </div>
@@ -696,7 +742,7 @@ export default function App() {
                     <div className="bg-white p-8 rounded-3xl shadow-2xl flex flex-col items-center max-w-sm w-full relative">
                         <button onClick={() => setShowQRModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-900 text-xl font-bold">&times;</button>
                         <h2 className="text-slate-900 font-bold text-xl mb-1">{targetEvent.eventName}</h2>
-                        <p className="text-violet-600 font-black text-3xl mb-6">SIÈGE {selectedSeat}</p>
+                        <p className="text-violet-600 font-black text-3xl mb-6">{t("SIÈGE", "SEAT")} {selectedSeat}</p>
                         
                         <div className="border-4 border-slate-100 rounded-xl p-2 mb-6">
                             <img 
@@ -724,7 +770,7 @@ export default function App() {
                         <h1 className="text-xl font-bold text-violet-400 flex items-center gap-2">🎟️ ARC TICKET</h1>
                         <div className="bg-slate-900 p-1.5 px-4 rounded-lg border border-slate-800">
                             <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-                                {activeTab === 'spectator' ? '👁️ ESPACE SPECTATEUR' : '🎭 ESPACE ORGANISATEUR'}
+                                {activeTab === 'spectator' ? t('👁️ ESPACE SPECTATEUR', '👁️ SPECTATOR AREA') : t('🎭 ESPACE ORGANISATEUR', '🎭 ORGANIZER AREA')}
                             </span>
                         </div>
                     </div>
@@ -735,8 +781,17 @@ export default function App() {
                             </span>
                             <span className="text-slate-300 font-mono text-xs border-l border-slate-700 pl-3 ml-1 py-0.5">{formatAddress(userAddress)}</span>
                         </div>
-                        <button onClick={disconnectWallet} title="Se déconnecter / Changer d'espace" className="bg-slate-900 border border-slate-800 text-slate-500 p-2 rounded-lg transition hover:bg-red-900/30 hover:text-red-400">
-                            🚪
+                        
+                        <button onClick={toggleLang} className="bg-slate-900 border border-slate-800 text-slate-500 px-3 py-2 rounded-lg font-bold text-xs transition hover:text-white">
+                            {lang === 'FR' ? 'EN' : 'FR'}
+                        </button>
+
+                        <button onClick={disconnectWallet} title={t("Se déconnecter / Changer d'espace", "Disconnect / Change Area")} className="bg-slate-900 border border-slate-800 text-slate-500 p-2 rounded-lg transition hover:bg-red-900/30 hover:text-red-400">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+                                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                                <polyline points="16 17 21 12 16 7"></polyline>
+                                <line x1="21" y1="12" x2="9" y2="12"></line>
+                            </svg>
                         </button>
                     </div>
                 </header>
@@ -762,45 +817,45 @@ export default function App() {
                                             ✖
                                         </button>
                                     )}
-                                    <h3 className="text-xs font-bold text-violet-400 mb-4 uppercase tracking-wider">Créer un Événement</h3>
+                                    <h3 className="text-xs font-bold text-violet-400 mb-4 uppercase tracking-wider">{t("Créer un Événement", "Create an Event")}</h3>
                                     <form onSubmit={handleCreateEvent} className="flex flex-col gap-3">
                                         <div>
-                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Nom de l'événement</label>
-                                            <input type="text" value={eventName} onChange={(e) => setEventName(e.target.value)} placeholder="Ex: Concert Rock" className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-slate-200" required />
+                                            <label className="text-[9px] text-slate-500 uppercase font-bold">{t("Nom de l'événement", "Event Name")}</label>
+                                            <input type="text" value={eventName} onChange={(e) => setEventName(e.target.value)} placeholder={t("Ex: Concert Rock", "Ex: Rock Concert")} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-slate-200" required />
                                         </div>
                                         <div>
-                                            <label className="text-[9px] text-slate-500 uppercase font-bold">URL du Flyer (Image)</label>
+                                            <label className="text-[9px] text-slate-500 uppercase font-bold">{t("URL du Flyer (Image)", "Flyer URL (Image)")}</label>
                                             <input type="url" value={flyerUrl} onChange={(e) => setFlyerUrl(e.target.value)} placeholder="https://lien.jpg" className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-slate-200" required />
                                         </div>
                                         <div className="grid grid-cols-1 gap-3">
                                             <div>
-                                                <label className="text-[9px] text-slate-500 uppercase font-bold">Début du spectacle</label>
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">{t("Début du spectacle", "Event Start")}</label>
                                                 <input type="datetime-local" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-sky-300" required />
                                             </div>
                                             <div>
-                                                <label className="text-[9px] text-slate-500 uppercase font-bold">Fin Remboursement</label>
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">{t("Fin Remboursement", "Refund Deadline")}</label>
                                                 <input type="datetime-local" value={deadlineDate} onChange={(e) => setDeadlineDate(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-orange-300" required />
                                             </div>
                                         </div>
                                         <div className="grid grid-cols-2 gap-3">
                                             <div>
-                                                <label className="text-[9px] text-slate-500 uppercase font-bold">Places</label>
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">{t("Places", "Seats")}</label>
                                                 <input type="number" value={formSeats} onChange={(e) => setFormSeats(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono text-violet-400" required />
                                             </div>
                                             <div>
-                                                <label className="text-[9px] text-slate-500 uppercase font-bold">Prix (USDC)</label>
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">{t("Prix (USDC)", "Price (USDC)")}</label>
                                                 <input type="number" value={ticketPrice} onChange={(e) => setTicketPrice(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono" required />
                                             </div>
                                             <div>
-                                                <label className="text-[9px] text-slate-500 uppercase font-bold">Plafond Anti-Scalping (%)</label>
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">{t("Plafond Anti-Scalping (%)", "Anti-Scalping Cap (%)")}</label>
                                                 <input type="number" value={maxMarkup} onChange={(e) => setMaxMarkup(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono" required />
                                             </div>
                                             <div>
-                                                <label className="text-[9px] text-slate-500 uppercase font-bold">Royalties (%)</label>
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">{t("Royalties (%)", "Royalties (%)")}</label>
                                                 <input type="number" value={royalty} onChange={(e) => setRoyalty(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono text-orange-400" required />
                                             </div>
                                         </div>
-                                        <button type="submit" className="mt-2 bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold py-2.5 rounded-xl transition">DÉPLOYER SUR LA BLOCKCHAIN</button>
+                                        <button type="submit" className="mt-2 bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold py-2.5 rounded-xl transition">{t("DÉPLOYER SUR LA BLOCKCHAIN", "DEPLOY TO BLOCKCHAIN")}</button>
                                     </form>
                                 </div>
                             ) : (
@@ -811,36 +866,36 @@ export default function App() {
                                     }} 
                                     className="bg-slate-900 border border-slate-800 hover:border-violet-500 p-5 rounded-2xl shadow-lg flex items-center justify-center gap-2 text-violet-400 font-bold text-xs transition animate-fade-in"
                                 >
-                                    <span>➕</span> CRÉER UN NOUVEL ÉVÉNEMENT
+                                    <span>➕</span> {t("CRÉER UN NOUVEL ÉVÉNEMENT", "CREATE A NEW EVENT")}
                                 </button>
                             )}
                             
                             <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-lg flex-1">
                                 <div className="flex justify-between items-center mb-4">
                                     <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-                                        {showHiddenEvents ? "Corbeille" : "Mes Événements"}
+                                        {showHiddenEvents ? t("Corbeille", "Trash") : t("Mes Événements", "My Events")}
                                     </h3>
                                     {hiddenEvents.length > 0 && (
                                         <button onClick={() => setShowHiddenEvents(!showHiddenEvents)} className="text-[10px] text-slate-400 hover:text-violet-400 transition bg-slate-800 px-2 py-1 rounded">
-                                            {showHiddenEvents ? "Voir les actifs" : `Corbeille (${hiddenEvents.length})`}
+                                            {showHiddenEvents ? t("Voir les actifs", "View active") : `${t("Corbeille", "Trash")} (${hiddenEvents.length})`}
                                         </button>
                                     )}
                                 </div>
 
-                                {displayEvents.length === 0 ? <p className="text-slate-500 text-xs italic text-center py-4">Aucun événement {showHiddenEvents ? "dans la corbeille" : "visible"}.</p> : (
+                                {displayEvents.length === 0 ? <p className="text-slate-500 text-xs italic text-center py-4">{t(`Aucun événement ${showHiddenEvents ? "dans la corbeille" : "visible"}.`, `No ${showHiddenEvents ? "events in the trash" : "visible events"}.`)}</p> : (
                                     <div className="flex flex-col gap-2 max-h-[250px] overflow-y-auto pr-1">
                                         {displayEvents.map((evt, idx) => (
                                             <div key={idx} className={`w-full flex items-center bg-slate-950 hover:bg-slate-800 border rounded-xl transition ${selectedEvent === evt ? 'border-violet-500 shadow-[0_0_10px_rgba(139,92,246,0.2)]' : 'border-slate-800'}`}>
                                                 <button onClick={() => selectEventForManagement(evt)} className="flex-1 text-left p-3 flex flex-col overflow-hidden">
-                                                    <span className="text-violet-400 font-bold text-xs">Événement {formatAddress(evt)}</span>
+                                                    <span className="text-violet-400 font-bold text-xs">{t("Événement", "Event")} {formatAddress(evt)}</span>
                                                     <span className="text-slate-500 font-mono text-[9px] truncate mt-0.5">{evt}</span>
                                                 </button>
                                                 {showHiddenEvents ? (
-                                                    <button onClick={(e) => restoreEvent(evt, e)} className="p-3 text-slate-500 hover:text-emerald-400 transition" title="Restaurer cet événement">
+                                                    <button onClick={(e) => restoreEvent(evt, e)} className="p-3 text-slate-500 hover:text-emerald-400 transition" title={t("Restaurer cet événement", "Restore this event")}>
                                                         ♻️
                                                     </button>
                                                 ) : (
-                                                    <button onClick={(e) => hideEvent(evt, e)} className="p-3 text-slate-600 hover:text-red-400 transition" title="Cacher cet événement">
+                                                    <button onClick={(e) => hideEvent(evt, e)} className="p-3 text-slate-600 hover:text-red-400 transition" title={t("Cacher cet événement", "Hide this event")}>
                                                         🗑️
                                                     </button>
                                                 )}
@@ -858,48 +913,48 @@ export default function App() {
                                         <img src={eventDetails.flyer} alt="Flyer" className="w-24 h-24 object-cover rounded-lg border border-slate-700" onError={(e) => e.target.src = 'https://via.placeholder.com/150/1e293b/a78bfa?text=Image+Invalide'} />
                                         <div className="flex-1">
                                             <h3 className="text-xl font-bold text-violet-400 mb-1">{eventDetails.name}</h3>
-                                            <p className="text-sky-300 text-xs font-bold mb-2">📅 Le {eventDetails.start}</p>
+                                            <p className="text-sky-300 text-xs font-bold mb-2">{t("📅 Le", "📅 On")} {eventDetails.start}</p>
                                             <p className="text-slate-500 font-mono text-[10px] truncate">{selectedEvent}</p>
                                         </div>
                                         {!eventDetails.isCancelled && (
                                             <button onClick={handleCancelEvent} className="bg-red-900/40 hover:bg-red-600 border border-red-700 text-white font-bold text-xs px-4 rounded-xl transition self-start h-10">
-                                                ANNULER L'ÉVÉNEMENT
+                                                {t("ANNULER L'ÉVÉNEMENT", "CANCEL EVENT")}
                                             </button>
                                         )}
                                         {eventDetails.isCancelled && (
                                             <div className="bg-red-600 text-white font-bold text-xs px-4 py-2 rounded-xl self-start">
-                                                ÉVÉNEMENT ANNULÉ
+                                                {t("ÉVÉNEMENT ANNULÉ", "EVENT CANCELLED")}
                                             </div>
                                         )}
                                     </div>
                                     
                                     <div className="grid grid-cols-3 gap-4 mb-8">
                                         <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-center">
-                                            <p className="text-[10px] text-slate-500 uppercase font-bold">Prix d'Achat</p>
+                                            <p className="text-[10px] text-slate-500 uppercase font-bold">{t("Prix d'Achat", "Purchase Price")}</p>
                                             <p className="text-xl font-bold text-white mt-1">{eventDetails.price} <span className="text-xs text-slate-500">USDC</span></p>
                                         </div>
                                         <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-center">
-                                            <p className="text-[10px] text-slate-500 uppercase font-bold">Jauge</p>
-                                            <p className="text-xl font-bold text-violet-400 mt-1">{eventDetails.maxSeats} <span className="text-xs text-slate-500">places</span></p>
+                                            <p className="text-[10px] text-slate-500 uppercase font-bold">{t("Jauge", "Capacity")}</p>
+                                            <p className="text-xl font-bold text-violet-400 mt-1">{eventDetails.maxSeats} <span className="text-xs text-slate-500">{t("places", "seats")}</span></p>
                                         </div>
                                         <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-center relative overflow-hidden group">
                                             {eventDetails.isCancelled ? (
                                                 <div className="flex flex-col items-center justify-center h-full text-emerald-400">
-                                                    <p className="text-[10px] font-bold uppercase">Remboursements</p>
-                                                    <p className="text-sm font-bold">Ouverts à tous</p>
+                                                    <p className="text-[10px] font-bold uppercase">{t("Remboursements", "Refunds")}</p>
+                                                    <p className="text-sm font-bold">{t("Ouverts à tous", "Open to all")}</p>
                                                 </div>
                                             ) : eventDetails.deadlineUnix > 0 ? (
                                                 <>
-                                                    <p className="text-[10px] text-slate-500 uppercase font-bold group-hover:opacity-0 transition">Limite Remboursement</p>
+                                                    <p className="text-[10px] text-slate-500 uppercase font-bold group-hover:opacity-0 transition">{t("Limite Remboursement", "Refund Limit")}</p>
                                                     <p className="text-xs font-bold text-emerald-400 mt-2 truncate group-hover:opacity-0 transition">{eventDetails.deadline}</p>
                                                     <button onClick={handleDisableRefunds} className="absolute inset-0 bg-red-600/90 text-white font-bold text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
-                                                        DÉSACTIVER LES REMBOURSEMENTS
+                                                        {t("DÉSACTIVER LES REMBOURSEMENTS", "DISABLE REFUNDS")}
                                                     </button>
                                                 </>
                                             ) : (
                                                 <div className="flex flex-col items-center justify-center h-full text-red-500">
-                                                    <p className="text-[10px] font-bold uppercase">Remboursements</p>
-                                                    <p className="text-sm font-bold">Désactivés</p>
+                                                    <p className="text-[10px] font-bold uppercase">{t("Remboursements", "Refunds")}</p>
+                                                    <p className="text-sm font-bold">{t("Désactivés", "Disabled")}</p>
                                                 </div>
                                             )}
                                         </div>
@@ -907,26 +962,26 @@ export default function App() {
 
                                     {!eventDetails.isCancelled && (
                                     <div className="flex flex-col gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800">
-                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wide border-b border-slate-800 pb-2 mb-1">Paramètres Modifiables</p>
+                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wide border-b border-slate-800 pb-2 mb-1">{t("Paramètres Modifiables", "Modifiable Settings")}</p>
                                         <form onSubmit={handleUpdateMarkup} className="flex flex-col sm:flex-row items-start sm:items-end gap-3 justify-between">
                                             <div className="flex-1 w-full">
-                                                <label className="text-[10px] text-slate-500 font-bold">Plafond Anti-Scalping : <span className="text-violet-400 font-mono">{eventDetails.markup}%</span></label>
+                                                <label className="text-[10px] text-slate-500 font-bold">{t("Plafond Anti-Scalping :", "Anti-Scalping Cap:")} <span className="text-violet-400 font-mono">{eventDetails.markup}%</span></label>
                                                 <input type="number" value={modifMarkup} onChange={(e) => setModifMarkup(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-800 px-3 py-2 rounded-lg text-xs outline-none focus:border-violet-500" required />
                                             </div>
-                                            <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 py-2 rounded-lg transition h-9 w-full sm:w-auto">MàJ</button>
+                                            <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 py-2 rounded-lg transition h-9 w-full sm:w-auto">{t("MàJ", "Update")}</button>
                                         </form>
                                         <form onSubmit={handleUpdateRoyalty} className="flex flex-col sm:flex-row items-start sm:items-end gap-3 justify-between mt-2">
                                             <div className="flex-1 w-full">
-                                                <label className="text-[10px] text-slate-500 font-bold">Royalties sur la Revente : <span className="text-violet-400 font-mono">{eventDetails.royalty}%</span></label>
+                                                <label className="text-[10px] text-slate-500 font-bold">{t("Royalties sur la Revente :", "Resale Royalties:")} <span className="text-violet-400 font-mono">{eventDetails.royalty}%</span></label>
                                                 <input type="number" value={modifRoyalty} onChange={(e) => setModifRoyalty(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-800 px-3 py-2 rounded-lg text-xs outline-none focus:border-violet-500" required />
                                             </div>
-                                            <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 py-2 rounded-lg transition h-9 w-full sm:w-auto">MàJ</button>
+                                            <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 py-2 rounded-lg transition h-9 w-full sm:w-auto">{t("MàJ", "Update")}</button>
                                         </form>
                                         <form onSubmit={handleUpdateDeadline} className="flex flex-col gap-2 mt-2">
-                                            <label className="text-[10px] text-slate-500 font-bold">Repousser la fermeture des remboursements</label>
+                                            <label className="text-[10px] text-slate-500 font-bold">{t("Repousser la fermeture des remboursements", "Extend refund deadline")}</label>
                                             <div className="flex flex-col sm:flex-row gap-3">
                                                 <input type="datetime-local" value={modifDeadlineDate} onChange={(e) => setModifDeadlineDate(e.target.value)} className="flex-1 bg-slate-900 border border-slate-800 px-3 py-2 rounded-lg text-xs outline-none focus:border-violet-500 w-full" required />
-                                                <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 rounded-lg transition h-9 w-full sm:w-auto">Appliquer</button>
+                                                <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 rounded-lg transition h-9 w-full sm:w-auto">{t("Appliquer", "Apply")}</button>
                                             </div>
                                         </form>
                                     </div>
@@ -935,7 +990,7 @@ export default function App() {
                             ) : (
                                 <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl h-full flex flex-col items-center justify-center text-center text-slate-500 border-dashed">
                                     <span className="text-3xl">⚙️</span>
-                                    <p className="text-xs italic mt-2">Sélectionnez un événement pour ouvrir sa console.</p>
+                                    <p className="text-xs italic mt-2">{t("Sélectionnez un événement pour ouvrir sa console.", "Select an event to open its console.")}</p>
                                 </div>
                             )}
                         </div>
@@ -951,15 +1006,15 @@ export default function App() {
                                 <div className="flex items-center gap-3">
                                     <span className="text-2xl animate-bounce">🔔</span>
                                     <div>
-                                        <p className="text-sky-300 font-bold text-sm">Vous avez des offres en attente !</p>
-                                        <p className="text-slate-300 text-xs mt-0.5">Cliquez sur les sièges lumineux ({mySeatsWithOffers.join(', ')}) pour voir les propositions.</p>
+                                        <p className="text-sky-300 font-bold text-sm">{t("Vous avez des offres en attente !", "You have pending offers!")}</p>
+                                        <p className="text-slate-300 text-xs mt-0.5">{t(`Cliquez sur les sièges lumineux (${mySeatsWithOffers.join(', ')}) pour voir les propositions.`, `Click on the glowing seats (${mySeatsWithOffers.join(', ')}) to view the proposals.`)}</p>
                                     </div>
                                 </div>
                             </div>
                         )}
 
                         <div className="w-full max-w-3xl bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-lg mb-6">
-                            <label className="text-[10px] text-sky-400 uppercase font-bold ml-1">📍 Quelle salle voulez-vous rejoindre ?</label>
+                            <label className="text-[10px] text-sky-400 uppercase font-bold ml-1">{t("📍 Quelle salle voulez-vous rejoindre ?", "📍 Which venue do you want to join?")}</label>
                             
                             <div className="relative w-full mt-2">
                                 <div className="bg-slate-950 border border-slate-800 p-3.5 rounded-xl cursor-pointer hover:border-sky-500 transition" onClick={() => setIsDropdownOpen(!isDropdownOpen)}>
@@ -969,24 +1024,25 @@ export default function App() {
                                             <p className="text-slate-500 font-mono text-[10px] mt-0.5">{targetEvent.eventAddress}</p>
                                         </div>
                                     ) : (
-                                        <p className="text-slate-500 text-sm py-1">Sélectionnez un spectacle existant...</p>
+                                        <p className="text-slate-500 text-sm py-1">{t("Sélectionnez un spectacle existant...", "Select an existing show...")}</p>
                                     )}
                                 </div>
                                 
                                 {isDropdownOpen && (
                                     <div className="absolute z-50 w-full mt-2 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl max-h-60 overflow-y-auto">
                                         {allAvailableEvents.length === 0 ? (
-                                            <p className="p-4 text-xs text-slate-500 text-center">Aucun événement créé sur le réseau.</p>
+                                            <p className="p-4 text-xs text-slate-500 text-center">{t("Aucun événement créé sur le réseau.", "No events created on the network.")}</p>
                                         ) : (
                                             allAvailableEvents.map((evt, idx) => {
                                                 const dateOptions = { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' };
-                                                const formattedStart = new Date(Number(evt.eventStart) * 1000).toLocaleString('fr-FR', dateOptions);
+                                                const locale = lang === 'FR' ? 'fr-FR' : 'en-US';
+                                                const formattedStart = new Date(Number(evt.eventStart) * 1000).toLocaleString(locale, dateOptions);
                                                 return (
                                                 <div key={idx} onClick={() => { setTargetEvent(evt); setIsDropdownOpen(false); }} className="flex gap-4 p-3.5 border-b border-slate-800 hover:bg-slate-800 cursor-pointer transition items-center">
                                                     <img src={evt.flyerUrl} alt="" className="w-12 h-12 object-cover rounded-md border border-slate-700" onError={(e) => e.target.src = 'https://via.placeholder.com/50/1e293b/a78bfa'} />
                                                     <div>
                                                         <p className="text-white font-bold text-sm">{evt.eventName}</p>
-                                                        <p className="text-sky-400 text-[10px] font-bold mt-0.5">Le {formattedStart}</p>
+                                                        <p className="text-sky-400 text-[10px] font-bold mt-0.5">{t("Le", "On")} {formattedStart}</p>
                                                     </div>
                                                 </div>
                                                 );
@@ -1005,11 +1061,11 @@ export default function App() {
                                     <div>
                                         <h2 className="text-3xl font-bold text-white mb-1 drop-shadow-md">{targetEvent.eventName}</h2>
                                         <p className="text-sky-400 text-sm font-bold flex items-center gap-2">
-                                            <span>📅</span> {new Date(Number(targetEvent.eventStart) * 1000).toLocaleString('fr-FR', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                            <span>📅</span> {new Date(Number(targetEvent.eventStart) * 1000).toLocaleString(lang === 'FR' ? 'fr-FR' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                                         </p>
                                     </div>
                                     <div className="text-right">
-                                        <p className="text-[10px] text-slate-400 uppercase font-mono mb-1">Contrat Officiel</p>
+                                        <p className="text-[10px] text-slate-400 uppercase font-mono mb-1">{t("Contrat Officiel", "Official Contract")}</p>
                                         <p className="text-slate-300 font-mono text-xs bg-slate-900/50 px-2 py-1 rounded border border-slate-700 backdrop-blur-md">{formatAddress(targetEvent.eventAddress)}</p>
                                     </div>
                                 </div>
@@ -1018,16 +1074,16 @@ export default function App() {
                         
                         {currentEventIsCancelled && (
                             <div className="w-full max-w-3xl mb-6 bg-red-900/40 border border-red-600 p-4 rounded-xl text-center">
-                                <h3 className="text-red-400 font-bold text-lg">⚠️ ÉVÉNEMENT ANNULÉ</h3>
-                                <p className="text-slate-300 text-xs mt-1">L'organisateur a annulé ce spectacle. Les achats et échanges sont suspendus. Si vous possédez un billet, vous pouvez demander un remboursement immédiat ci-dessous.</p>
+                                <h3 className="text-red-400 font-bold text-lg">{t("⚠️ ÉVÉNEMENT ANNULÉ", "⚠️ EVENT CANCELLED")}</h3>
+                                <p className="text-slate-300 text-xs mt-1">{t("L'organisateur a annulé ce spectacle. Les achats et échanges sont suspendus. Si vous possédez un billet, vous pouvez demander un remboursement immédiat ci-dessous.", "The organizer has cancelled this show. Purchases and exchanges are suspended. If you have a ticket, you can request an immediate refund below.")}</p>
                             </div>
                         )}
 
-                        {/* --- NOUVEAU : LISTE DES BILLETS POSSÉDÉS AVEC ACCÈS DIRECT AU QR CODE --- */}
+                        {/* --- LISTE DES BILLETS POSSÉDÉS AVEC ACCÈS DIRECT AU QR CODE --- */}
                         {myOwnedSeats.length > 0 && targetEvent && (
                             <div className="w-full max-w-3xl mb-6 bg-violet-900/20 border border-violet-800 p-5 rounded-2xl shadow-lg">
                                 <h3 className="text-sm font-bold text-violet-300 mb-4 uppercase tracking-wider flex items-center gap-2">
-                                    <span>🎟️</span> Mes Billets pour cet événement
+                                    <span>🎟️</span> {t("Mes Billets pour cet événement", "My Tickets for this event")}
                                 </h3>
                                 <div className="flex flex-wrap gap-3">
                                     {myOwnedSeats.map(seat => (
@@ -1039,7 +1095,7 @@ export default function App() {
                                             }}
                                             className="bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition flex items-center gap-2 shadow-[0_0_10px_rgba(139,92,246,0.3)]"
                                         >
-                                            Siège {seat} <span className="text-lg">📱</span>
+                                            {t("Siège", "Seat")} {seat} <span className="text-lg">📱</span>
                                         </button>
                                     ))}
                                 </div>
@@ -1049,13 +1105,13 @@ export default function App() {
                         <div className="w-full max-w-3xl flex flex-col items-center bg-slate-900 border border-slate-800 p-8 rounded-2xl shadow-lg relative overflow-hidden">
                             {!targetEvent && (
                                 <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm z-10 flex items-center justify-center">
-                                    <p className="bg-slate-900 border border-slate-700 px-6 py-3 rounded-full text-xs font-bold text-slate-400 shadow-xl">Sélectionnez un événement pour afficher le plan</p>
+                                    <p className="bg-slate-900 border border-slate-700 px-6 py-3 rounded-full text-xs font-bold text-slate-400 shadow-xl">{t("Sélectionnez un événement pour afficher le plan", "Select an event to display the seating plan")}</p>
                                 </div>
                             )}
 
-                            <h3 className="text-sm font-bold text-slate-300 mb-8 uppercase tracking-wider">Plan de la Salle ({currentEventTotalSeats} places)</h3>
+                            <h3 className="text-sm font-bold text-slate-300 mb-8 uppercase tracking-wider">{t("Plan de la Salle", "Seating Plan")} ({currentEventTotalSeats} {t("places", "seats")})</h3>
                             <div className="w-2/3 h-2 bg-gradient-to-r from-slate-800 via-slate-500 to-slate-800 rounded-t-full mb-12 relative">
-                                <p className="absolute w-full text-center text-[10px] text-slate-500 top-3 font-mono uppercase">Scène Principale</p>
+                                <p className="absolute w-full text-center text-[10px] text-slate-500 top-3 font-mono uppercase">{t("Scène Principale", "Main Stage")}</p>
                             </div>
 
                             <div className="flex flex-col gap-4">
@@ -1105,10 +1161,10 @@ export default function App() {
                             </div>
 
                             <div className="mt-12 flex flex-wrap justify-center gap-6 text-[10px] font-mono text-slate-400 uppercase">
-                                <div className="flex items-center gap-2"><span className="w-3 h-3 bg-sky-600 rounded-sm"></span> Libre</div>
-                                <div className="flex items-center gap-2"><span className="w-3 h-3 bg-violet-500 rounded-sm"></span> Mes Billets</div>
-                                <div className="flex items-center gap-2"><span className="w-3 h-3 bg-orange-500 rounded-sm"></span> Revente</div>
-                                <div className="flex items-center gap-2"><span className="w-3 h-3 bg-slate-600 rounded-sm opacity-80"></span> Vendu</div>
+                                <div className="flex items-center gap-2"><span className="w-3 h-3 bg-sky-600 rounded-sm"></span> {t("Libre", "Available")}</div>
+                                <div className="flex items-center gap-2"><span className="w-3 h-3 bg-violet-500 rounded-sm"></span> {t("Mes Billets", "My Tickets")}</div>
+                                <div className="flex items-center gap-2"><span className="w-3 h-3 bg-orange-500 rounded-sm"></span> {t("Revente", "Resale")}</div>
+                                <div className="flex items-center gap-2"><span className="w-3 h-3 bg-slate-600 rounded-sm opacity-80"></span> {t("Vendu", "Sold")}</div>
                             </div>
                         </div>
 
@@ -1125,12 +1181,12 @@ export default function App() {
                                 <div className="mt-6 w-full max-w-3xl bg-slate-950 border border-slate-800 p-5 rounded-2xl flex flex-col animate-fade-in shadow-2xl gap-4">
                                     <div className="flex flex-col md:flex-row justify-between items-center w-full gap-4">
                                         <div>
-                                            <p className="text-white font-bold text-sm">Siège sélectionné : <span className="text-emerald-400">{selectedSeat}</span></p>
-                                            <p className="text-slate-500 text-xs mt-1">Numéro Blockchain : #{getSeatIdNumber(selectedSeat)}</p>
+                                            <p className="text-white font-bold text-sm">{t("Siège sélectionné :", "Selected Seat:")} <span className="text-emerald-400">{selectedSeat}</span></p>
+                                            <p className="text-slate-500 text-xs mt-1">{t("Numéro Blockchain :", "Blockchain Number:")} #{getSeatIdNumber(selectedSeat)}</p>
                                             
                                             {isOwned && !isResale && !incomingOffer && (
                                                 <button onClick={() => setShowQRModal(true)} className="mt-3 bg-violet-600/20 hover:bg-violet-600/40 border border-violet-500/50 text-violet-300 text-xs font-bold px-4 py-2 rounded-lg transition flex items-center gap-2">
-                                                    <span>🎟️</span> AFFICHER MON BILLET
+                                                    <span>🎟️</span> {t("AFFICHER MON BILLET", "VIEW MY TICKET")}
                                                 </button>
                                             )}
                                         </div>
@@ -1140,41 +1196,41 @@ export default function App() {
                                                 incomingOffer ? (
                                                     <div className="bg-sky-900/40 border border-sky-700 p-3 rounded-xl flex items-center gap-3">
                                                         <div>
-                                                            <p className="text-xs text-sky-300 font-bold">🎉 Offre d'achat/échange reçue !</p>
+                                                            <p className="text-xs text-sky-300 font-bold">{t("🎉 Offre d'achat/échange reçue !", "🎉 Purchase/exchange offer received!")}</p>
                                                             <p className="text-[10px] text-slate-300">
-                                                                {incomingOffer.offeredTicketStr !== "Aucun" 
-                                                                    ? `Contre le siège ${incomingOffer.offeredTicketStr} + ${incomingOffer.usdcAmount} USDC`
-                                                                    : `Contre ${incomingOffer.usdcAmount} USDC`}
+                                                                {incomingOffer.offeredTicketStr !== t("Aucun", "None") 
+                                                                    ? t(`Contre le siège ${incomingOffer.offeredTicketStr} + ${incomingOffer.usdcAmount} USDC`, `For seat ${incomingOffer.offeredTicketStr} + ${incomingOffer.usdcAmount} USDC`)
+                                                                    : t(`Contre ${incomingOffer.usdcAmount} USDC`, `For ${incomingOffer.usdcAmount} USDC`)}
                                                             </p>
                                                         </div>
                                                         {!currentEventIsCancelled && (
                                                         <button onClick={handleAcceptOffer} className="bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition">
-                                                            ACCEPTER L'OFFRE
+                                                            {t("ACCEPTER L'OFFRE", "ACCEPT OFFER")}
                                                         </button>
                                                         )}
                                                     </div>
                                                 ) : isResale ? (
                                                     <>
-                                                        <span className="text-orange-400 font-bold text-xs">En vente : {resalePrice} USDC</span>
+                                                        <span className="text-orange-400 font-bold text-xs">{t("En vente :", "On sale:")} {resalePrice} USDC</span>
                                                         <button onClick={handleCancelResale} className="bg-red-600 hover:bg-red-500 text-white text-xs font-bold px-6 py-3.5 rounded-xl transition">
-                                                            ANNULER LA VENTE
+                                                            {t("ANNULER LA VENTE", "CANCEL SALE")}
                                                         </button>
                                                     </>
                                                 ) : (
                                                     <div className="flex flex-col gap-2">
                                                         {isRefundActive ? (
                                                             <button onClick={handleRefundTicket} className="bg-emerald-600/20 hover:bg-emerald-600/40 border border-emerald-500/50 text-emerald-400 text-xs font-bold px-6 py-2 rounded-xl transition w-full">
-                                                                REMBOURSEMENT INSTANTANÉ
+                                                                {t("REMBOURSEMENT INSTANTANÉ", "INSTANT REFUND")}
                                                             </button>
                                                         ) : (
-                                                            <p className="text-[10px] text-slate-500 text-center font-bold">Remboursements terminés</p>
+                                                            <p className="text-[10px] text-slate-500 text-center font-bold">{t("Remboursements terminés", "Refunds closed")}</p>
                                                         )}
                                                         
                                                         {!currentEventIsCancelled && (
                                                         <div className="flex gap-2">
-                                                            <input type="number" placeholder="Prix USDC" value={resalePriceInput} onChange={(e) => setResalePriceInput(e.target.value)} className="w-24 bg-slate-900 border border-slate-700 rounded-xl px-3 text-xs outline-none text-white font-mono" />
+                                                            <input type="number" placeholder={t("Prix USDC", "USDC Price")} value={resalePriceInput} onChange={(e) => setResalePriceInput(e.target.value)} className="w-24 bg-slate-900 border border-slate-700 rounded-xl px-3 text-xs outline-none text-white font-mono" />
                                                             <button onClick={handleListForResale} className="bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold px-6 py-3 rounded-xl transition flex-1">
-                                                                METTRE EN VENTE
+                                                                {t("METTRE EN VENTE", "LIST FOR SALE")}
                                                             </button>
                                                         </div>
                                                         )}
@@ -1182,26 +1238,26 @@ export default function App() {
                                                 )
                                             ) : isResale && !currentEventIsCancelled ? (
                                                 <button onClick={handleBuyResaleTicket} className="bg-orange-500 hover:bg-orange-400 text-white text-xs font-bold px-8 py-3.5 rounded-xl transition shadow-[0_0_15px_rgba(249,115,22,0.3)]">
-                                                    ACHETER REVENTE ({resalePrice} USDC)
+                                                    {t("ACHETER REVENTE", "BUY RESALE")} ({resalePrice} USDC)
                                                 </button>
                                             ) : isTaken && !currentEventIsCancelled ? (
                                                 <div className="flex flex-col sm:flex-row gap-2 items-center bg-slate-900 p-2 rounded-xl border border-slate-800">
                                                     <select value={offerSeatInput} onChange={(e) => setOfferSeatInput(e.target.value)} className="bg-slate-950 border border-slate-700 text-white text-xs px-2 py-2 rounded-lg outline-none cursor-pointer">
-                                                        <option value="0">Aucun billet (USDC uniquement)</option>
-                                                        {myOwnedSeats.map(seat => <option key={seat} value={seat}>Mon siège {seat}</option>)}
+                                                        <option value="0">{t("Aucun billet (USDC uniquement)", "No ticket (USDC only)")}</option>
+                                                        {myOwnedSeats.map(seat => <option key={seat} value={seat}>{t(`Mon siège ${seat}`, `My seat ${seat}`)}</option>)}
                                                     </select>
                                                     <span className="text-slate-500 font-bold text-xs">+</span>
-                                                    <input type="number" placeholder="Montant USDC" value={offerUsdcInput} onChange={(e) => setOfferUsdcInput(e.target.value)} className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs outline-none text-white font-mono" />
+                                                    <input type="number" placeholder={t("Montant USDC", "USDC Amount")} value={offerUsdcInput} onChange={(e) => setOfferUsdcInput(e.target.value)} className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs outline-none text-white font-mono" />
                                                     <button onClick={handleMakeOffer} className="bg-sky-600 hover:bg-sky-500 text-white text-[10px] font-bold px-4 py-2.5 rounded-lg transition ml-2">
-                                                        FAIRE UNE OFFRE
+                                                        {t("FAIRE UNE OFFRE", "MAKE AN OFFER")}
                                                     </button>
                                                 </div>
                                             ) : !currentEventIsCancelled ? (
                                                 <button onClick={handleBuyTicket} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-8 py-3.5 rounded-xl transition shadow-[0_0_15px_rgba(16,185,129,0.3)]">
-                                                    ACHETER ({currentEventPrice} USDC)
+                                                    {t("ACHETER", "BUY")} ({currentEventPrice} USDC)
                                                 </button>
                                             ) : (
-                                                <p className="text-red-500 font-bold text-xs">Achat impossible (Événement annulé)</p>
+                                                <p className="text-red-500 font-bold text-xs">{t("Achat impossible (Événement annulé)", "Purchase unavailable (Event cancelled)")}</p>
                                             )}
                                         </div>
                                     </div>
