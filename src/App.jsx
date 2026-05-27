@@ -56,7 +56,8 @@ const ticketEventABI = [
 const getTomorrowLocalISO = () => {
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
-    return new Date(tomorrow.getTime() - tomorrow.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    const isoString = new Date(tomorrow.getTime() - tomorrow.getTimezoneOffset() * 60000).toISOString();
+    return isoString.substring(0, 16); 
 };
 
 export default function App() {
@@ -64,7 +65,7 @@ export default function App() {
     const [signer, setSigner] = useState(null);
     const [userAddress, setUserAddress] = useState("");
     
-    const [activeTab, setActiveTab] = useState("spectator"); 
+    const [activeTab, setActiveTab] = useState(""); // Vide au départ pour forcer l'accueil
     const [status, setStatus] = useState({ text: "", isError: false });
     const [seatActionStatus, setSeatActionStatus] = useState({ text: "", isError: false }); 
     
@@ -72,6 +73,8 @@ export default function App() {
     const [allAvailableEvents, setAllAvailableEvents] = useState([]);
     const [hiddenEvents, setHiddenEvents] = useState([]);
     const [showHiddenEvents, setShowHiddenEvents] = useState(false);
+
+    const [isCreatingNew, setIsCreatingNew] = useState(true);
 
     const [selectedEvent, setSelectedEvent] = useState(null);
     const [eventDetails, setEventDetails] = useState({ name: "", flyer: "", start: "", startUnix: 0, price: "0", markup: "0", royalty: "0", deadline: "", maxSeats: "0", deadlineUnix: 0, isCancelled: false });
@@ -135,6 +138,12 @@ export default function App() {
         return `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}`;
     };
 
+    const refreshSpectatorGrid = () => {
+        const currentTarget = targetEvent;
+        setTargetEvent(null); 
+        setTimeout(() => setTargetEvent(currentTarget), 100);
+    };
+
     const checkAndSwitchNetwork = async () => {
         if (!window.ethereum) return false;
         try {
@@ -174,10 +183,13 @@ export default function App() {
     const connectWallet = async (initialTab) => {
         if (window.ethereum) {
             try {
-                setActiveTab(initialTab);
+                setActiveTab(initialTab); // Enregistre le choix strict
 
                 const isCorrectNetwork = await checkAndSwitchNetwork();
-                if (!isCorrectNetwork) return;
+                if (!isCorrectNetwork) {
+                    setActiveTab(""); // Reset si échec
+                    return;
+                }
 
                 const browserProvider = new ethers.BrowserProvider(window.ethereum);
                 const ethSigner = await browserProvider.getSigner();
@@ -187,13 +199,17 @@ export default function App() {
                 setUserAddress(address);
                 loadOrganizerEvents(address, browserProvider);
                 loadGlobalEvents(browserProvider);
-            } catch (err) { showStatus("Erreur de connexion", true); }
+            } catch (err) { 
+                showStatus("Erreur de connexion", true); 
+                setActiveTab(""); 
+            }
         } else { showStatus("Veuillez installer MetaMask", true); }
     };
 
     const disconnectWallet = () => {
         setSigner(null); setProvider(null); setUserAddress("");
         setMyEvents([]); setSelectedEvent(null); setTargetEvent(null);
+        setActiveTab(""); // Ramène à l'écran d'accueil
     };
 
     const hideEvent = (eventAddress, e) => {
@@ -201,7 +217,10 @@ export default function App() {
         const updatedHidden = [...hiddenEvents, eventAddress];
         setHiddenEvents(updatedHidden);
         localStorage.setItem('hiddenArcEvents', JSON.stringify(updatedHidden));
-        if (selectedEvent === eventAddress) setSelectedEvent(null);
+        if (selectedEvent === eventAddress) {
+            setSelectedEvent(null);
+            setIsCreatingNew(true); 
+        }
     };
 
     const restoreEvent = (eventAddress, e) => {
@@ -232,6 +251,8 @@ export default function App() {
         if (!provider) return;
         try {
             showStatus("Lecture des données...", false);
+            setIsCreatingNew(false); 
+            
             const eventContract = new ethers.Contract(eventAddress, ticketEventABI, provider);
             
             const name = await eventContract.eventName();
@@ -280,6 +301,7 @@ export default function App() {
             loadOrganizerEvents(userAddress, provider);
             loadGlobalEvents(provider);
             setEventName(""); 
+            setSelectedEvent(null);
         } catch (err) { showStatus("❌ Échec de la création", true); }
     };
 
@@ -360,14 +382,11 @@ export default function App() {
         return `${rowChar}${col}`;
     };
 
-    // --- FONCTION EXTERNALISÉE POUR LE POLLING (TEMPS RÉEL) ---
     const fetchSeatsAndData = useCallback(async (isBackgroundUpdate = false) => {
         if (targetEvent && provider && userAddress) {
             try {
-                // On utilise un appel "propre" (sans cache) en injectant le provider
                 const contract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, provider);
                 
-                // Si on ne fait qu'une mise à jour silencieuse, on ne recharge pas les prix, juste les sièges
                 if (!isBackgroundUpdate) {
                     const rawPrice = await contract.ticketPrice();
                     setCurrentEventPrice(ethers.formatEther(rawPrice));
@@ -382,7 +401,6 @@ export default function App() {
                     setCurrentEventTotalSeats(totalSeatsFromBlockchain);
                 }
 
-                // Pour éviter le cache RPC, nous lisons l'état courant total
                 const totalSeats = currentEventTotalSeats > 0 ? currentEventTotalSeats : Number(await contract.maxSeats());
 
                 const promises = [];
@@ -444,16 +462,15 @@ export default function App() {
         }
     }, [targetEvent, provider, userAddress, currentEventTotalSeats]);
 
-    // NOUVEAU : Le système de Polling (Vérifie la blockchain toutes les 5 secondes)
     useEffect(() => {
-        fetchSeatsAndData(false); // Premier chargement complet
+        fetchSeatsAndData(false); 
         
         if (targetEvent) {
             const intervalId = setInterval(() => {
-                fetchSeatsAndData(true); // Rafraîchissements silencieux
+                fetchSeatsAndData(true); 
             }, 5000);
             
-            return () => clearInterval(intervalId); // Nettoyage si on quitte la salle
+            return () => clearInterval(intervalId); 
         }
     }, [targetEvent, fetchSeatsAndData]);
 
@@ -466,7 +483,6 @@ export default function App() {
             const rawPrice = ethers.parseEther(currentEventPrice);
             const buyTx = await eventContract.buyTicket(getSeatIdNumber(selectedSeat), { value: rawPrice });
             
-            // Mise à jour optimiste IMMÉDIATE (sans attendre le réseau)
             setTakenSeats(prev => [...prev, selectedSeat]);
             setMyOwnedSeats(prev => [...prev, selectedSeat]);
             
@@ -474,7 +490,7 @@ export default function App() {
 
             showSeatStatus("Acheté avec succès !", false);
             setSelectedSeat(null);
-            fetchSeatsAndData(true); // Force un refresh final après confirmation
+            fetchSeatsAndData(true); 
         } catch (err) { showSeatStatus("Échec de la transaction (Fonds insuffisants ou annulé)", true); }
     };
 
@@ -484,7 +500,6 @@ export default function App() {
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             const numericalSeatId = getSeatIdNumber(selectedSeat);
             
-            // Optimisme
             setTakenSeats(prev => prev.filter(s => s !== selectedSeat));
             setMyOwnedSeats(prev => prev.filter(s => s !== selectedSeat));
 
@@ -505,7 +520,6 @@ export default function App() {
             const numericalSeatId = getSeatIdNumber(selectedSeat);
             const priceInUnits = ethers.parseEther(resalePriceInput);
             
-            // Optimisme
             setResaleListings(prev => ({...prev, [selectedSeat]: resalePriceInput}));
 
             const tx = await eventContract.listForResale(numericalSeatId, priceInUnits);
@@ -524,7 +538,6 @@ export default function App() {
             const eventContract = new ethers.Contract(targetEvent.eventAddress, ticketEventABI, signer);
             const numericalSeatId = getSeatIdNumber(selectedSeat);
             
-            // Optimisme
             setResaleListings(prev => { const n = {...prev}; delete n[selectedSeat]; return n; });
 
             const tx = await eventContract.cancelResale(numericalSeatId);
@@ -544,7 +557,6 @@ export default function App() {
             const priceStr = resaleListings[selectedSeat];
             const rawPrice = ethers.parseEther(priceStr);
             
-            // Optimisme
             setMyOwnedSeats(prev => [...prev, selectedSeat]);
             setResaleListings(prev => { const n = {...prev}; delete n[selectedSeat]; return n; });
 
@@ -572,6 +584,15 @@ export default function App() {
             
             const tx = await eventContract.makeOffer(targetIdNum, mySeatIdNum, { value: extraUsdcRaw });
             await tx.wait();
+
+            setActiveOffers(prev => ({
+                ...prev,
+                [selectedSeat]: {
+                    bidder: userAddress,
+                    offeredTicketStr: offerSeatInput === "0" ? "Aucun" : offerSeatInput,
+                    usdcAmount: offerUsdcInput || "0"
+                }
+            }));
 
             showSeatStatus("Offre envoyée avec succès !", false);
             setSelectedSeat(null);
@@ -605,7 +626,7 @@ export default function App() {
         : myEvents.filter(evt => !hiddenEvents.includes(evt));
 
     // --- PAGE D'ACCUEIL ---
-    if (!signer) {
+    if (!activeTab || !signer) {
         return (
             <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 relative overflow-hidden">
                 <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-violet-600/20 rounded-full blur-[100px] pointer-events-none"></div>
@@ -692,9 +713,11 @@ export default function App() {
                 <header className="flex justify-between items-center border-b border-slate-800 pb-4">
                     <div className="flex items-center gap-6">
                         <h1 className="text-xl font-bold text-violet-400 flex items-center gap-2">🎟️ ARC TICKET</h1>
-                        <div className="flex gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800">
-                            <button onClick={() => setActiveTab('spectator')} className={`px-4 py-1.5 text-xs font-bold rounded-md transition ${activeTab === 'spectator' ? 'bg-slate-700 text-white' : 'text-slate-500'}`}>SPECTATEUR</button>
-                            <button onClick={() => setActiveTab('organizer')} className={`px-4 py-1.5 text-xs font-bold rounded-md transition ${activeTab === 'organizer' ? 'bg-slate-700 text-white' : 'text-slate-500'}`}>ORGANISATEUR</button>
+                        {/* LES BOUTONS ONT ÉTÉ SUPPRIMÉS D'ICI COMME DEMANDÉ */}
+                        <div className="bg-slate-900 p-1.5 px-4 rounded-lg border border-slate-800">
+                            <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                                {activeTab === 'spectator' ? '👁️ ESPACE SPECTATEUR' : '🎭 ESPACE ORGANISATEUR'}
+                            </span>
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
@@ -704,8 +727,8 @@ export default function App() {
                             </span>
                             <span className="text-slate-300 font-mono text-xs border-l border-slate-700 pl-3 ml-1 py-0.5">{formatAddress(userAddress)}</span>
                         </div>
-                        <button onClick={disconnectWallet} className="bg-slate-900 border border-slate-800 text-slate-500 p-2 rounded-lg transition hover:bg-red-900/30 hover:text-red-400">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+                        <button onClick={disconnectWallet} title="Se déconnecter / Changer d'espace" className="bg-slate-900 border border-slate-800 text-slate-500 p-2 rounded-lg transition hover:bg-red-900/30 hover:text-red-400">
+                            🚪
                         </button>
                     </div>
                 </header>
@@ -720,48 +743,69 @@ export default function App() {
                 {activeTab === 'organizer' && (
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in">
                         <div className="lg:col-span-1 flex flex-col gap-6">
-                            <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-lg">
-                                <h3 className="text-xs font-bold text-violet-400 mb-4 uppercase tracking-wider">Créer un Événement</h3>
-                                <form onSubmit={handleCreateEvent} className="flex flex-col gap-3">
-                                    <div>
-                                        <label className="text-[9px] text-slate-500 uppercase font-bold">Nom de l'événement</label>
-                                        <input type="text" value={eventName} onChange={(e) => setEventName(e.target.value)} placeholder="Ex: Concert Rock" className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-slate-200" required />
-                                    </div>
-                                    <div>
-                                        <label className="text-[9px] text-slate-500 uppercase font-bold">URL du Flyer (Image)</label>
-                                        <input type="url" value={flyerUrl} onChange={(e) => setFlyerUrl(e.target.value)} placeholder="https://lien.jpg" className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-slate-200" required />
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-3">
+                            
+                            {isCreatingNew ? (
+                                <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-lg animate-fade-in relative">
+                                    {selectedEvent && (
+                                        <button 
+                                            onClick={() => setIsCreatingNew(false)} 
+                                            className="absolute top-4 right-4 text-slate-500 hover:text-slate-300"
+                                        >
+                                            ✖
+                                        </button>
+                                    )}
+                                    <h3 className="text-xs font-bold text-violet-400 mb-4 uppercase tracking-wider">Créer un Événement</h3>
+                                    <form onSubmit={handleCreateEvent} className="flex flex-col gap-3">
                                         <div>
-                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Début du spectacle</label>
-                                            <input type="datetime-local" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-sky-300" required />
+                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Nom de l'événement</label>
+                                            <input type="text" value={eventName} onChange={(e) => setEventName(e.target.value)} placeholder="Ex: Concert Rock" className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-slate-200" required />
                                         </div>
                                         <div>
-                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Fin Remboursement</label>
-                                            <input type="datetime-local" value={deadlineDate} onChange={(e) => setDeadlineDate(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-orange-300" required />
+                                            <label className="text-[9px] text-slate-500 uppercase font-bold">URL du Flyer (Image)</label>
+                                            <input type="url" value={flyerUrl} onChange={(e) => setFlyerUrl(e.target.value)} placeholder="https://lien.jpg" className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-slate-200" required />
                                         </div>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <div>
-                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Places</label>
-                                            <input type="number" value={formSeats} onChange={(e) => setFormSeats(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono text-violet-400" required />
+                                        <div className="grid grid-cols-1 gap-3">
+                                            <div>
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">Début du spectacle</label>
+                                                <input type="datetime-local" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-sky-300" required />
+                                            </div>
+                                            <div>
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">Fin Remboursement</label>
+                                                <input type="datetime-local" value={deadlineDate} onChange={(e) => setDeadlineDate(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-orange-300" required />
+                                            </div>
                                         </div>
-                                        <div>
-                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Prix (USDC)</label>
-                                            <input type="number" value={ticketPrice} onChange={(e) => setTicketPrice(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono" required />
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">Places</label>
+                                                <input type="number" value={formSeats} onChange={(e) => setFormSeats(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono text-violet-400" required />
+                                            </div>
+                                            <div>
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">Prix (USDC)</label>
+                                                <input type="number" value={ticketPrice} onChange={(e) => setTicketPrice(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono" required />
+                                            </div>
+                                            <div>
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">Plafond Anti-Scalping (%)</label>
+                                                <input type="number" value={maxMarkup} onChange={(e) => setMaxMarkup(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono" required />
+                                            </div>
+                                            <div>
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">Royalties (%)</label>
+                                                <input type="number" value={royalty} onChange={(e) => setRoyalty(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono text-orange-400" required />
+                                            </div>
                                         </div>
-                                        <div>
-                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Plafond Anti-Scalping (%)</label>
-                                            <input type="number" value={maxMarkup} onChange={(e) => setMaxMarkup(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono" required />
-                                        </div>
-                                        <div>
-                                            <label className="text-[9px] text-slate-500 uppercase font-bold">Royalties (%)</label>
-                                            <input type="number" value={royalty} onChange={(e) => setRoyalty(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 font-mono text-orange-400" required />
-                                        </div>
-                                    </div>
-                                    <button type="submit" className="mt-2 bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold py-2.5 rounded-xl transition">DÉPLOYER SUR LA BLOCKCHAIN</button>
-                                </form>
-                            </div>
+                                        <button type="submit" className="mt-2 bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold py-2.5 rounded-xl transition">DÉPLOYER SUR LA BLOCKCHAIN</button>
+                                    </form>
+                                </div>
+                            ) : (
+                                <button 
+                                    onClick={() => {
+                                        setIsCreatingNew(true);
+                                        setSelectedEvent(null);
+                                    }} 
+                                    className="bg-slate-900 border border-slate-800 hover:border-violet-500 p-5 rounded-2xl shadow-lg flex items-center justify-center gap-2 text-violet-400 font-bold text-xs transition animate-fade-in"
+                                >
+                                    <span>➕</span> CRÉER UN NOUVEL ÉVÉNEMENT
+                                </button>
+                            )}
                             
                             <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-lg flex-1">
                                 <div className="flex justify-between items-center mb-4">
@@ -779,7 +823,7 @@ export default function App() {
                                     <div className="flex flex-col gap-2 max-h-[250px] overflow-y-auto pr-1">
                                         {displayEvents.map((evt, idx) => (
                                             <div key={idx} className={`w-full flex items-center bg-slate-950 hover:bg-slate-800 border rounded-xl transition ${selectedEvent === evt ? 'border-violet-500 shadow-[0_0_10px_rgba(139,92,246,0.2)]' : 'border-slate-800'}`}>
-                                                <button onClick={() => selectEventForManagement(evt)} className="flex-1 text-left p-3 flex flex-col">
+                                                <button onClick={() => selectEventForManagement(evt)} className="flex-1 text-left p-3 flex flex-col overflow-hidden">
                                                     <span className="text-violet-400 font-bold text-xs">Événement {formatAddress(evt)}</span>
                                                     <span className="text-slate-500 font-mono text-[9px] truncate mt-0.5">{evt}</span>
                                                 </button>
@@ -801,7 +845,7 @@ export default function App() {
 
                         <div className="lg:col-span-2">
                             {selectedEvent && eventDetails.name ? (
-                                <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-lg h-full flex flex-col">
+                                <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-lg h-full flex flex-col animate-fade-in">
                                     <div className="flex gap-4 mb-6 bg-slate-950 p-4 rounded-xl border border-slate-800">
                                         <img src={eventDetails.flyer} alt="Flyer" className="w-24 h-24 object-cover rounded-lg border border-slate-700" onError={(e) => e.target.src = 'https://via.placeholder.com/150/1e293b/a78bfa?text=Image+Invalide'} />
                                         <div className="flex-1">
@@ -856,25 +900,25 @@ export default function App() {
                                     {!eventDetails.isCancelled && (
                                     <div className="flex flex-col gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800">
                                         <p className="text-xs font-bold text-slate-400 uppercase tracking-wide border-b border-slate-800 pb-2 mb-1">Paramètres Modifiables</p>
-                                        <form onSubmit={handleUpdateMarkup} className="flex items-end gap-3 justify-between">
-                                            <div className="flex-1">
+                                        <form onSubmit={handleUpdateMarkup} className="flex flex-col sm:flex-row items-start sm:items-end gap-3 justify-between">
+                                            <div className="flex-1 w-full">
                                                 <label className="text-[10px] text-slate-500 font-bold">Plafond Anti-Scalping : <span className="text-violet-400 font-mono">{eventDetails.markup}%</span></label>
                                                 <input type="number" value={modifMarkup} onChange={(e) => setModifMarkup(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-800 px-3 py-2 rounded-lg text-xs outline-none focus:border-violet-500" required />
                                             </div>
-                                            <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 py-2 rounded-lg transition h-9">MàJ</button>
+                                            <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 py-2 rounded-lg transition h-9 w-full sm:w-auto">MàJ</button>
                                         </form>
-                                        <form onSubmit={handleUpdateRoyalty} className="flex items-end gap-3 justify-between mt-2">
-                                            <div className="flex-1">
+                                        <form onSubmit={handleUpdateRoyalty} className="flex flex-col sm:flex-row items-start sm:items-end gap-3 justify-between mt-2">
+                                            <div className="flex-1 w-full">
                                                 <label className="text-[10px] text-slate-500 font-bold">Royalties sur la Revente : <span className="text-violet-400 font-mono">{eventDetails.royalty}%</span></label>
                                                 <input type="number" value={modifRoyalty} onChange={(e) => setModifRoyalty(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-800 px-3 py-2 rounded-lg text-xs outline-none focus:border-violet-500" required />
                                             </div>
-                                            <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 py-2 rounded-lg transition h-9">MàJ</button>
+                                            <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 py-2 rounded-lg transition h-9 w-full sm:w-auto">MàJ</button>
                                         </form>
                                         <form onSubmit={handleUpdateDeadline} className="flex flex-col gap-2 mt-2">
                                             <label className="text-[10px] text-slate-500 font-bold">Repousser la fermeture des remboursements</label>
-                                            <div className="flex gap-3">
-                                                <input type="datetime-local" value={modifDeadlineDate} onChange={(e) => setModifDeadlineDate(e.target.value)} className="flex-1 bg-slate-900 border border-slate-800 px-3 py-2 rounded-lg text-xs outline-none focus:border-violet-500" required />
-                                                <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 rounded-lg transition h-9">Appliquer</button>
+                                            <div className="flex flex-col sm:flex-row gap-3">
+                                                <input type="datetime-local" value={modifDeadlineDate} onChange={(e) => setModifDeadlineDate(e.target.value)} className="flex-1 bg-slate-900 border border-slate-800 px-3 py-2 rounded-lg text-xs outline-none focus:border-violet-500 w-full" required />
+                                                <button type="submit" className="bg-slate-800 hover:bg-violet-600 border border-slate-700 text-white font-bold text-xs px-4 rounded-lg transition h-9 w-full sm:w-auto">Appliquer</button>
                                             </div>
                                         </form>
                                     </div>
