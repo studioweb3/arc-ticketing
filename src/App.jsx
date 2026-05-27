@@ -703,7 +703,7 @@ export default function App() {
                         </div>
                         <h2 className="text-2xl font-bold text-sky-400 mb-3">{t("Espace Spectateur", "Spectator Area")}</h2>
                         <p className="text-slate-400 text-sm mb-8 px-4 leading-relaxed">{t("Achetez, revendez et échangez vos billets de spectacles en toute sécurité. Le marché secondaire enfin équitable.", "Buy, resell and exchange your event tickets securely. The secondary market, finally fair.")}</p>
-                        <div className="bg-sky-600 group-hover:bg-sky-500 text-white text-xs font-bold py-3 px-8 rounded-full transition-colors w-full uppercase tracking-wider">
+                        <div className="mt-auto bg-sky-600 group-hover:bg-sky-500 text-white text-xs font-bold py-3 px-8 rounded-full transition-colors w-full uppercase tracking-wider">
                             {t("Connexion Web3", "Web3 Login")}
                         </div>
                     </button>
@@ -717,7 +717,7 @@ export default function App() {
                         </div>
                         <h2 className="text-2xl font-bold text-violet-400 mb-3">{t("Espace Organisateur", "Organizer Area")}</h2>
                         <p className="text-slate-400 text-sm mb-8 px-4 leading-relaxed">{t("Créez vos événements, maîtrisez vos jauges et collectez des royalties automatiques sur chaque revente.", "Create your events, control your capacity and collect automatic royalties on every resale.")}</p>
-                        <div className="bg-violet-600 group-hover:bg-violet-500 text-white text-xs font-bold py-3 px-8 rounded-full transition-colors w-full uppercase tracking-wider">
+                        <div className="mt-auto bg-violet-600 group-hover:bg-violet-500 text-white text-xs font-bold py-3 px-8 rounded-full transition-colors w-full uppercase tracking-wider">
                             {t("Connexion Web3", "Web3 Login")}
                         </div>
                     </button>
