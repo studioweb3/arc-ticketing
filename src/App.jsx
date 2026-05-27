@@ -183,11 +183,11 @@ export default function App() {
     const connectWallet = async (initialTab) => {
         if (window.ethereum) {
             try {
-                setActiveTab(initialTab); // Enregistre le choix strict
+                setActiveTab(initialTab); 
 
                 const isCorrectNetwork = await checkAndSwitchNetwork();
                 if (!isCorrectNetwork) {
-                    setActiveTab(""); // Reset si échec
+                    setActiveTab(""); 
                     return;
                 }
 
@@ -209,7 +209,7 @@ export default function App() {
     const disconnectWallet = () => {
         setSigner(null); setProvider(null); setUserAddress("");
         setMyEvents([]); setSelectedEvent(null); setTargetEvent(null);
-        setActiveTab(""); // Ramène à l'écran d'accueil
+        setActiveTab(""); 
     };
 
     const hideEvent = (eventAddress, e) => {
@@ -713,7 +713,6 @@ export default function App() {
                 <header className="flex justify-between items-center border-b border-slate-800 pb-4">
                     <div className="flex items-center gap-6">
                         <h1 className="text-xl font-bold text-violet-400 flex items-center gap-2">🎟️ ARC TICKET</h1>
-                        {/* LES BOUTONS ONT ÉTÉ SUPPRIMÉS D'ICI COMME DEMANDÉ */}
                         <div className="bg-slate-900 p-1.5 px-4 rounded-lg border border-slate-800">
                             <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
                                 {activeTab === 'spectator' ? '👁️ ESPACE SPECTATEUR' : '🎭 ESPACE ORGANISATEUR'}
@@ -1012,6 +1011,29 @@ export default function App() {
                             <div className="w-full max-w-3xl mb-6 bg-red-900/40 border border-red-600 p-4 rounded-xl text-center">
                                 <h3 className="text-red-400 font-bold text-lg">⚠️ ÉVÉNEMENT ANNULÉ</h3>
                                 <p className="text-slate-300 text-xs mt-1">L'organisateur a annulé ce spectacle. Les achats et échanges sont suspendus. Si vous possédez un billet, vous pouvez demander un remboursement immédiat ci-dessous.</p>
+                            </div>
+                        )}
+
+                        {/* --- NOUVEAU : LISTE DES BILLETS POSSÉDÉS AVEC ACCÈS DIRECT AU QR CODE --- */}
+                        {myOwnedSeats.length > 0 && targetEvent && (
+                            <div className="w-full max-w-3xl mb-6 bg-violet-900/20 border border-violet-800 p-5 rounded-2xl shadow-lg">
+                                <h3 className="text-sm font-bold text-violet-300 mb-4 uppercase tracking-wider flex items-center gap-2">
+                                    <span>🎟️</span> Mes Billets pour cet événement
+                                </h3>
+                                <div className="flex flex-wrap gap-3">
+                                    {myOwnedSeats.map(seat => (
+                                        <button 
+                                            key={seat}
+                                            onClick={() => {
+                                                setSelectedSeat(seat);
+                                                setShowQRModal(true);
+                                            }}
+                                            className="bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition flex items-center gap-2 shadow-[0_0_10px_rgba(139,92,246,0.3)]"
+                                        >
+                                            Siège {seat} <span className="text-lg">📱</span>
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
                         )}
 
