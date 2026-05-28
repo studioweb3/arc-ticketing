@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
 
 // --- CONFIGURATION ARC TICKETING ---
-const FACTORY_ADDRESS = "0x4d6c0DcB5c2aA3270e061Ab549B378fFaAA9A776"; 
+// ⚠️ À REMPLACER PAR TA NOUVELLE ADRESSE DE FACTORY APRÈS REDÉPLOIEMENT
+const FACTORY_ADDRESS = "0x2D00722716e65B84E1CBe3b68358771C7E7E3Be0"; 
 
 // Configuration du réseau ARC Testnet pour MetaMask
 const TARGET_CHAIN_ID = "0x4cef52"; 
@@ -19,7 +20,7 @@ const TARGET_NETWORK_CONFIG = {
 };
 
 const factoryABI = [
-    "function createNewEvent(string _eventName, string _flyerUrl, uint256 _price, uint256 _markup, uint256 _royalty, uint256 _eventStart, uint256 _deadline, uint256 _maxSeats) external",
+    "function createNewEvent(string _eventName, string _flyerUrl, uint256 _price, uint256 _markup, uint256 _royalty, uint256 _eventStart, uint256 _deadline, uint256 _maxSeats, string _location, string _phone) external",
     "function getEventsByOrganizer(address _organizer) view returns (address[])",
     "function getAllEvents() view returns (tuple(address eventAddress, string eventName, string flyerUrl, uint256 eventStart)[])"
 ];
@@ -27,6 +28,8 @@ const factoryABI = [
 const ticketEventABI = [
     "function eventName() view returns (string)",
     "function flyerUrl() view returns (string)",
+    "function eventLocation() view returns (string)",
+    "function eventPhone() view returns (string)",
     "function eventStart() view returns (uint256)",
     "function ticketPrice() view returns (uint256)",
     "function maxMarkupPercent() view returns (uint256)",
@@ -89,7 +92,7 @@ export default function App() {
 
     // --- MODE VÉRIFICATION DÉDIÉ (SCANNER) ---
     const [verifyMode, setVerifyMode] = useState(false);
-    const [verifyResult, setVerifyResult] = useState({ status: 'loading', eventName: '', eventStart: 0, owner: '', contractAddress: '', seat: '' });
+    const [verifyResult, setVerifyResult] = useState({ status: 'loading', eventName: '', eventStart: 0, location: '', phone: '', owner: '', contractAddress: '', seat: '' });
 
     const [provider, setProvider] = useState(null);
     const [signer, setSigner] = useState(null);
@@ -107,10 +110,12 @@ export default function App() {
     const [isCreatingNew, setIsCreatingNew] = useState(true);
 
     const [selectedEvent, setSelectedEvent] = useState(null);
-    const [eventDetails, setEventDetails] = useState({ name: "", flyer: "", start: "", startUnix: 0, price: "0", markup: "0", royalty: "0", deadline: "", maxSeats: "0", deadlineUnix: 0, isCancelled: false });
+    const [eventDetails, setEventDetails] = useState({ name: "", flyer: "", location: "", phone: "", start: "", startUnix: 0, price: "0", markup: "0", royalty: "0", deadline: "", maxSeats: "0", deadlineUnix: 0, isCancelled: false });
     
     const [eventName, setEventName] = useState("");
     const [flyerUrl, setFlyerUrl] = useState("https://images.unsplash.com/photo-1540039155732-68473638e4ce?w=800&q=80"); 
+    const [eventLocation, setEventLocation] = useState(""); 
+    const [eventPhone, setEventPhone] = useState("");
     const [startDate, setStartDate] = useState(getTomorrowLocalISO());
     const [ticketPrice, setTicketPrice] = useState("10");
     const [maxMarkup, setMaxMarkup] = useState("20");
@@ -153,14 +158,15 @@ export default function App() {
             if (isVerify && vContract && vSeat) {
                 setVerifyMode(true);
                 try {
-                    // Création d'un provider en lecture seule (pas besoin de MetaMask pour l'agent !)
                     const rpcProvider = new ethers.JsonRpcProvider('https://rpc.testnet.arc.network');
                     const contract = new ethers.Contract(vContract, ticketEventABI, rpcProvider);
                     
                     const name = await contract.eventName();
                     const start = await contract.eventStart();
-                    const numericSeat = getSeatIdNumber(vSeat);
+                    const loc = await contract.eventLocation();
+                    const ph = await contract.eventPhone();
                     
+                    const numericSeat = getSeatIdNumber(vSeat);
                     const isMinted = await contract.isMinted(numericSeat);
                     const inTreasury = await contract.isAvailableInTreasury(numericSeat);
                     
@@ -176,6 +182,8 @@ export default function App() {
                         status: isValid ? 'valid' : 'invalid',
                         eventName: name,
                         eventStart: Number(start),
+                        location: loc,
+                        phone: ph,
                         owner: owner,
                         contractAddress: vContract,
                         seat: vSeat
@@ -190,7 +198,7 @@ export default function App() {
     }, []);
 
     useEffect(() => {
-        if (verifyMode) return; // Ne pas exécuter la logique wallet si on est sur la page scanner
+        if (verifyMode) return; 
 
         const checkConnection = async () => {
             if (window.ethereum) {
@@ -245,12 +253,6 @@ export default function App() {
     const formatAddress = (addr) => {
         if (!addr) return "";
         return `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}`;
-    };
-
-    const refreshSpectatorGrid = () => {
-        const currentTarget = targetEvent;
-        setTargetEvent(null); 
-        setTimeout(() => setTargetEvent(currentTarget), 100);
     };
 
     const checkAndSwitchNetwork = async () => {
@@ -366,6 +368,8 @@ export default function App() {
             
             const name = await eventContract.eventName();
             const flyer = await eventContract.flyerUrl();
+            const loc = await eventContract.eventLocation();
+            const ph = await eventContract.eventPhone();
             const start = await eventContract.eventStart();
             const price = await eventContract.ticketPrice();
             const markup = await eventContract.maxMarkupPercent();
@@ -380,7 +384,7 @@ export default function App() {
             const deadlineFormatted = Number(dead) === 0 ? t("Désactivé", "Disabled") : new Date(Number(dead) * 1000).toLocaleString(locale, dateOptions);
 
             setEventDetails({
-                name, flyer, start: startFormatted, startUnix: Number(start),
+                name, flyer, location: loc, phone: ph, start: startFormatted, startUnix: Number(start),
                 price: ethers.formatEther(price),
                 markup: markup.toString(),
                 royalty: roy.toString(),
@@ -404,13 +408,15 @@ export default function App() {
             const unixStart = Math.floor(new Date(startDate).getTime() / 1000);
             const unixDeadline = Math.floor(new Date(deadlineDate).getTime() / 1000);
             
-            const tx = await factory.createNewEvent(eventName, flyerUrl, priceInUnits, maxMarkup, royalty, unixStart, unixDeadline, formSeats);
+            const tx = await factory.createNewEvent(eventName, flyerUrl, priceInUnits, maxMarkup, royalty, unixStart, unixDeadline, formSeats, eventLocation, eventPhone);
             await tx.wait();
             
             showStatus(t("✅ Événement créé !", "✅ Event created!"), false);
             loadOrganizerEvents(userAddress, provider);
             loadGlobalEvents(provider);
             setEventName(""); 
+            setEventLocation("");
+            setEventPhone("");
             setSelectedEvent(null);
         } catch (err) { showStatus(t("❌ Échec de la création", "❌ Creation failed"), true); }
     };
@@ -749,6 +755,10 @@ export default function App() {
                                 <p className="text-[10px] text-slate-500 font-bold uppercase mb-1">{t("Événement", "Event")}</p>
                                 <p className="text-white font-bold text-lg mb-4">{verifyResult.eventName}</p>
                                 
+                                <p className="text-[10px] text-slate-500 font-bold uppercase mb-1">{t("Lieu & Contact", "Location & Contact")}</p>
+                                <p className="text-slate-300 text-xs mb-1">📍 {verifyResult.location}</p>
+                                <p className="text-slate-300 text-xs mb-4">📞 {verifyResult.phone}</p>
+
                                 <p className="text-[10px] text-slate-500 font-bold uppercase mb-1">{t("Date", "Date")}</p>
                                 <p className="text-sky-300 font-mono text-xs font-bold mb-4">
                                     {new Date(verifyResult.eventStart * 1000).toLocaleString(lang === 'FR' ? 'fr-FR' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -949,10 +959,20 @@ export default function App() {
                                             <input type="text" value={eventName} onChange={(e) => setEventName(e.target.value)} placeholder={t("Ex: Concert Rock", "Ex: Rock Concert")} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-slate-200" required />
                                         </div>
                                         <div>
-                                            <label className="text-[9px] text-slate-500 uppercase font-bold">{t("URL du Flyer (Image)", "Flyer URL (Image)")}</label>
-                                            <input type="url" value={flyerUrl} onChange={(e) => setFlyerUrl(e.target.value)} placeholder="https://lien.jpg" className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-slate-200" required />
+                                            <label className="text-[9px] text-slate-500 uppercase font-bold">{t("Adresse / Lieu", "Location / Address")}</label>
+                                            <input type="text" value={eventLocation} onChange={(e) => setEventLocation(e.target.value)} placeholder={t("Ex: Stade de France", "Ex: Madison Square Garden")} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-slate-200" required />
                                         </div>
-                                        <div className="grid grid-cols-1 gap-3">
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="col-span-1">
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">{t("Téléphone Contact", "Contact Phone")}</label>
+                                                <input type="tel" value={eventPhone} onChange={(e) => setEventPhone(e.target.value)} placeholder="+33 6 12..." className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-slate-200" required />
+                                            </div>
+                                            <div className="col-span-1">
+                                                <label className="text-[9px] text-slate-500 uppercase font-bold">{t("URL Flyer (Image)", "Flyer URL (Image)")}</label>
+                                                <input type="url" value={flyerUrl} onChange={(e) => setFlyerUrl(e.target.value)} placeholder="https://..." className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-slate-200" required />
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-1 gap-3 mt-2">
                                             <div>
                                                 <label className="text-[9px] text-slate-500 uppercase font-bold">{t("Début du spectacle", "Event Start")}</label>
                                                 <input type="datetime-local" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full mt-1 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs outline-none focus:border-violet-500 text-sky-300" required />
@@ -1038,6 +1058,7 @@ export default function App() {
                                         <img src={eventDetails.flyer} alt="Flyer" className="w-24 h-24 object-cover rounded-lg border border-slate-700" onError={(e) => e.target.src = 'https://via.placeholder.com/150/1e293b/a78bfa?text=Image+Invalide'} />
                                         <div className="flex-1">
                                             <h3 className="text-xl font-bold text-violet-400 mb-1">{eventDetails.name}</h3>
+                                            <p className="text-slate-400 text-[10px] mb-1">📍 {eventDetails.location} | 📞 {eventDetails.phone}</p>
                                             <p className="text-sky-300 text-xs font-bold mb-2">{t("📅 Le", "📅 On")} {eventDetails.start}</p>
                                             <p className="text-slate-500 font-mono text-[10px] truncate">{selectedEvent}</p>
                                         </div>
@@ -1185,6 +1206,7 @@ export default function App() {
                                 <div className="absolute bottom-0 left-0 w-full p-6 z-20 flex justify-between items-end">
                                     <div>
                                         <h2 className="text-3xl font-bold text-white mb-1 drop-shadow-md">{targetEvent.eventName}</h2>
+                                        <p className="text-slate-300 text-xs mb-1">📍 {targetEvent.location || t("Localisation non spécifiée", "Location not specified")}</p>
                                         <p className="text-sky-400 text-sm font-bold flex items-center gap-2">
                                             <span>📅</span> {new Date(Number(targetEvent.eventStart) * 1000).toLocaleString(lang === 'FR' ? 'fr-FR' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                                         </p>
