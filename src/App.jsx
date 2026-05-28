@@ -60,6 +60,21 @@ const getTomorrowLocalISO = () => {
     return isoString.substring(0, 16); 
 };
 
+// Fonctions utilitaires sorties du composant pour être accessibles partout
+const SEATS_PER_ROW = 10; 
+const getSeatIdNumber = (seatStr) => {
+    if (!seatStr || seatStr === "0") return 0;
+    const rowIndex = seatStr.charCodeAt(0) - 65; 
+    const seatNum = parseInt(seatStr.slice(1));
+    return (rowIndex * SEATS_PER_ROW) + seatNum;
+};
+const getSeatString = (num) => {
+    if (num === 0) return "0";
+    const rowChar = String.fromCharCode(65 + Math.floor((num - 1) / SEATS_PER_ROW));
+    const col = ((num - 1) % SEATS_PER_ROW) + 1;
+    return `${rowChar}${col}`;
+};
+
 export default function App() {
     // --- GESTION DE LA LANGUE ---
     const [lang, setLang] = useState(localStorage.getItem('arcLang') || 'FR');
@@ -71,6 +86,10 @@ export default function App() {
     };
 
     const t = useCallback((fr, en) => lang === 'FR' ? fr : en, [lang]);
+
+    // --- MODE VÉRIFICATION DÉDIÉ (SCANNER) ---
+    const [verifyMode, setVerifyMode] = useState(false);
+    const [verifyResult, setVerifyResult] = useState({ status: 'loading', eventName: '', eventStart: 0, owner: '', contractAddress: '', seat: '' });
 
     const [provider, setProvider] = useState(null);
     const [signer, setSigner] = useState(null);
@@ -123,9 +142,56 @@ export default function App() {
 
     const [showQRModal, setShowQRModal] = useState(false);
 
-    const seatsPerRow = 10; 
+    // --- DÉTECTION DU MODE VÉRIFICATION VIA L'URL ---
+    useEffect(() => {
+        const checkVerifyUrl = async () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const isVerify = urlParams.get('verify') === 'true';
+            const vContract = urlParams.get('contract');
+            const vSeat = urlParams.get('seat');
+
+            if (isVerify && vContract && vSeat) {
+                setVerifyMode(true);
+                try {
+                    // Création d'un provider en lecture seule (pas besoin de MetaMask pour l'agent !)
+                    const rpcProvider = new ethers.JsonRpcProvider('https://rpc.testnet.arc.network');
+                    const contract = new ethers.Contract(vContract, ticketEventABI, rpcProvider);
+                    
+                    const name = await contract.eventName();
+                    const start = await contract.eventStart();
+                    const numericSeat = getSeatIdNumber(vSeat);
+                    
+                    const isMinted = await contract.isMinted(numericSeat);
+                    const inTreasury = await contract.isAvailableInTreasury(numericSeat);
+                    
+                    let owner = "";
+                    let isValid = false;
+                    
+                    if (isMinted && !inTreasury) {
+                        owner = await contract.ownerOf(numericSeat);
+                        isValid = true;
+                    }
+                    
+                    setVerifyResult({
+                        status: isValid ? 'valid' : 'invalid',
+                        eventName: name,
+                        eventStart: Number(start),
+                        owner: owner,
+                        contractAddress: vContract,
+                        seat: vSeat
+                    });
+                } catch (err) {
+                    console.error(err);
+                    setVerifyResult({ status: 'error' });
+                }
+            }
+        };
+        checkVerifyUrl();
+    }, []);
 
     useEffect(() => {
+        if (verifyMode) return; // Ne pas exécuter la logique wallet si on est sur la page scanner
+
         const checkConnection = async () => {
             if (window.ethereum) {
                 try {
@@ -164,7 +230,7 @@ export default function App() {
         }
         const savedHidden = JSON.parse(localStorage.getItem('hiddenArcEvents')) || [];
         setHiddenEvents(savedHidden);
-    }, []);
+    }, [verifyMode]);
 
     const showStatus = (text, isError) => {
         setStatus({ text, isError });
@@ -412,20 +478,6 @@ export default function App() {
         } catch (err) { showStatus(t("❌ Échec de l'annulation", "❌ Cancellation failed"), true); console.error(err); }
     };
 
-    const getSeatIdNumber = (seatStr) => {
-        if (!seatStr || seatStr === "0") return 0;
-        const rowIndex = seatStr.charCodeAt(0) - 65; 
-        const seatNum = parseInt(seatStr.slice(1));
-        return (rowIndex * seatsPerRow) + seatNum;
-    };
-
-    const getSeatString = (num) => {
-        if (num === 0) return "0";
-        const rowChar = String.fromCharCode(65 + Math.floor((num - 1) / seatsPerRow));
-        const col = ((num - 1) % seatsPerRow) + 1;
-        return `${rowChar}${col}`;
-    };
-
     const fetchSeatsAndData = useCallback(async (isBackgroundUpdate = false) => {
         if (targetEvent && provider && userAddress) {
             try {
@@ -507,6 +559,8 @@ export default function App() {
     }, [targetEvent, provider, userAddress, currentEventTotalSeats, t]);
 
     useEffect(() => {
+        if (verifyMode) return; 
+
         const refreshGlobalData = () => {
             if (activeTab === 'spectator' && provider) {
                 loadGlobalEvents(provider);
@@ -521,7 +575,7 @@ export default function App() {
         const intervalId = setInterval(refreshGlobalData, 5000);
         
         return () => clearInterval(intervalId); 
-    }, [targetEvent, fetchSeatsAndData, activeTab, provider]);
+    }, [targetEvent, fetchSeatsAndData, activeTab, provider, verifyMode]);
 
     const handleBuyTicket = async () => {
         if (!targetEvent) return;
@@ -665,7 +719,79 @@ export default function App() {
         } catch (err) { showSeatStatus(t("Échec de l'échange", "Exchange failed"), true); }
     };
 
-    const totalRowsNeeded = Math.ceil(currentEventTotalSeats / seatsPerRow);
+    // --- RENDU : PAGE DÉDIÉE DE VÉRIFICATION (SCANNER MOBILE) ---
+    if (verifyMode) {
+        return (
+            <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 relative">
+                <div className="absolute top-6 right-6 z-50">
+                    <button onClick={toggleLang} className="bg-slate-900 border border-slate-800 text-slate-400 px-3 py-1.5 rounded-lg font-bold text-xs hover:text-white transition shadow-lg">
+                        {lang === 'FR' ? 'EN' : 'FR'}
+                    </button>
+                </div>
+
+                <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl relative overflow-hidden text-center">
+                    {verifyResult.status === 'loading' && (
+                        <div className="py-12 flex flex-col items-center">
+                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-400 mb-4"></div>
+                            <p className="text-slate-400 text-sm font-bold animate-pulse">{t("Vérification en cours sur la blockchain...", "Verifying on the blockchain...")}</p>
+                        </div>
+                    )}
+
+                    {verifyResult.status === 'valid' && (
+                        <div className="animate-fade-in">
+                            <div className="w-24 h-24 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center text-5xl mx-auto mb-4 border-4 border-emerald-500 shadow-[0_0_30px_rgba(16,185,129,0.4)]">
+                                ✓
+                            </div>
+                            <h2 className="text-3xl font-black text-emerald-400 mb-6">{t("BILLET VALIDE", "VALID TICKET")}</h2>
+                            
+                            <div className="bg-slate-950 rounded-2xl p-5 border border-slate-800 text-left mb-6 relative overflow-hidden">
+                                <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div>
+                                <p className="text-[10px] text-slate-500 font-bold uppercase mb-1">{t("Événement", "Event")}</p>
+                                <p className="text-white font-bold text-lg mb-4">{verifyResult.eventName}</p>
+                                
+                                <p className="text-[10px] text-slate-500 font-bold uppercase mb-1">{t("Date", "Date")}</p>
+                                <p className="text-sky-300 font-mono text-xs font-bold mb-4">
+                                    {new Date(verifyResult.eventStart * 1000).toLocaleString(lang === 'FR' ? 'fr-FR' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                </p>
+                                
+                                <p className="text-[10px] text-slate-500 font-bold uppercase mb-1">{t("Place", "Seat")}</p>
+                                <p className="text-violet-400 font-black text-2xl">{verifyResult.seat}</p>
+                            </div>
+
+                            <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-700/50">
+                                <p className="text-[9px] text-slate-500 uppercase font-bold mb-1">{t("Preuve Blockchain (Détenteur)", "Blockchain Proof (Owner)")}</p>
+                                <p className="text-slate-300 font-mono text-[10px] truncate">{verifyResult.owner}</p>
+                            </div>
+                        </div>
+                    )}
+
+                    {(verifyResult.status === 'invalid' || verifyResult.status === 'error') && (
+                        <div className="animate-fade-in py-8">
+                            <div className="w-24 h-24 bg-red-500/20 text-red-500 rounded-full flex items-center justify-center text-5xl mx-auto mb-4 border-4 border-red-500 shadow-[0_0_30px_rgba(239,68,68,0.4)]">
+                                ✕
+                            </div>
+                            <h2 className="text-3xl font-black text-red-500 mb-2">{t("BILLET INVALIDE", "INVALID TICKET")}</h2>
+                            <p className="text-slate-400 text-sm mb-6">{t("Ce billet n'est pas reconnu ou a été remboursé.", "This ticket is not recognized or has been refunded.")}</p>
+                            
+                            {verifyResult.seat && (
+                                <div className="bg-slate-950 rounded-2xl p-4 border border-slate-800 text-center mb-6">
+                                    <p className="text-[10px] text-slate-500 font-bold uppercase mb-1">{t("Place ciblée", "Targeted Seat")}</p>
+                                    <p className="text-slate-300 font-black text-xl">{verifyResult.seat}</p>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    
+                    <div className="mt-8 pt-4 border-t border-slate-800 flex items-center justify-center gap-2 text-slate-500 text-[10px] font-mono">
+                        <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span></span>
+                        {t("Vérifié en direct sur ARC Network", "Verified live on ARC Network")}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    const totalRowsNeeded = Math.ceil(currentEventTotalSeats / SEATS_PER_ROW);
     const generatedRowsArray = Array.from({ length: totalRowsNeeded }, (_, i) => String.fromCharCode(65 + i));
 
     const mySeatsWithOffers = myOwnedSeats.filter(seat => activeOffers[seat]);
@@ -737,7 +863,9 @@ export default function App() {
     return (
         <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center p-6 pb-24 relative">
             
-            {showQRModal && selectedSeat && targetEvent && (
+            {showQRModal && selectedSeat && targetEvent && (() => {
+                const verificationUrl = `${window.location.origin}${window.location.pathname}?verify=true&contract=${targetEvent.eventAddress}&seat=${selectedSeat}`;
+                return (
                 <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-4 animate-fade-in">
                     <div className="bg-white p-8 rounded-3xl shadow-2xl flex flex-col items-center max-w-sm w-full relative">
                         <button onClick={() => setShowQRModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-900 text-xl font-bold">&times;</button>
@@ -746,13 +874,7 @@ export default function App() {
                         
                         <div className="border-4 border-slate-100 rounded-xl p-2 mb-6">
                             <img 
-                                src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(JSON.stringify({
-                                    event: targetEvent.eventName,
-                                    date: new Date(Number(targetEvent.eventStart) * 1000).toLocaleString(lang === 'FR' ? 'fr-FR' : 'en-US', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
-                                    seat: selectedSeat,
-                                    contract: targetEvent.eventAddress,
-                                    owner: userAddress
-                                }))}`} 
+                                src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(verificationUrl)}`} 
                                 alt="QR Code Billet" 
                                 className="w-48 h-48"
                             />
@@ -763,7 +885,8 @@ export default function App() {
                         </p>
                     </div>
                 </div>
-            )}
+                );
+            })()}
 
             <div className="w-full max-w-5xl grid grid-cols-1 gap-6">
                 
@@ -1121,9 +1244,9 @@ export default function App() {
                                     <div key={row} className="flex items-center gap-2 sm:gap-4">
                                         <div className="text-slate-600 text-xs font-mono w-4">{row}</div>
                                         <div className="flex gap-1.5 sm:gap-2">
-                                            {Array.from({ length: seatsPerRow }).map((_, i) => {
+                                            {Array.from({ length: SEATS_PER_ROW }).map((_, i) => {
                                                 const seatNumberInRow = i + 1;
-                                                const absoluteSeatId = (rowIndex * seatsPerRow) + seatNumberInRow;
+                                                const absoluteSeatId = (rowIndex * SEATS_PER_ROW) + seatNumberInRow;
                                                 
                                                 if (absoluteSeatId > currentEventTotalSeats) return null;
 
