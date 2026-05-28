@@ -747,8 +747,10 @@ export default function App() {
                         <div className="border-4 border-slate-100 rounded-xl p-2 mb-6">
                             <img 
                                 src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(JSON.stringify({
-                                    contract: targetEvent.eventAddress,
+                                    event: targetEvent.eventName,
+                                    date: new Date(Number(targetEvent.eventStart) * 1000).toLocaleString(lang === 'FR' ? 'fr-FR' : 'en-US', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
                                     seat: selectedSeat,
+                                    contract: targetEvent.eventAddress,
                                     owner: userAddress
                                 }))}`} 
                                 alt="QR Code Billet" 
